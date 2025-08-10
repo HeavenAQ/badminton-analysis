@@ -1,0 +1,46 @@
+name: Test yaml
+
+on:
+  push:
+    branches: ["**"] # Trigger on push to any branch
+    # paths:
+    #   - "A1/**"
+  pull_request:
+    branches: ["**"] # Trigger on pull requests from any branch
+    # paths:
+    #   - "A1/**"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: data-lab
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # - name: Install build tools
+      #   run: |
+      #     sudo apt-get update && sudo apt-get install -y build-essentials
+      #     sudo apt-get software-properties-common
+      #     sudo apt-add-repository -y ppa:deadsnakes/ppa
+      #     sudo apt-get update
+      #     sudo apt-get install -y python3.12 python3.12-venv python3.12-dev
+
+      # - name: Make clean
+      #   run: make clean || true
+      #
+      # - name: Build btest, ishow, and fshow
+      #   run: make
+      #
+      # - name: Run dlc check (style and rules)
+      #   run: ./dlc bits.c
+      #
+      # - name: Run all btest checks
+      #   run: ./btest
+      #
+      # - name: Show success message
+      #   if: success()
+      #   run: echo "All tests passed ✅"
