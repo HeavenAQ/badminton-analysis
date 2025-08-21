@@ -2,7 +2,7 @@ import os
 import threading
 import time
 import base64
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 import cv2
 import numpy as np
 from queue import Queue
@@ -12,10 +12,19 @@ from Joints import JOINTS
 from Types import (
     COCOKeypoints,
     CoordinateList,
+    GradingOutcome,
     Handedness,
     Skill,
     VideoAnalysisResponse,
 )
+
+# --- Constants to replace "magic numbers" ---
+# These can be defined at the class or module level
+SMOOTHING_WINDOW_SIZE = 5
+PEAK_ACCELERATION_OFFSET = 2
+IMPACT_FRAME_SEARCH_WINDOW_BEFORE = 15
+IMPACT_FRAME_SEARCH_WINDOW_AFTER = 20
+ANALYSIS_WINDOW_PADDING_BEFORE = 30
 
 
 class VideoProcessor:
@@ -45,40 +54,27 @@ class VideoProcessor:
         k = np.ones(window_size) / window_size
         pad = window_size // 2
 
-        # Pad to keep a constant window at edges
+        # Pad to keep a constant window at edges (for convolution)
         x = np.pad(pos[:, 0], (pad, pad), mode=pad_mode)
         y = np.pad(pos[:, 1], (pad, pad), mode=pad_mode)
 
+        # perform convolution to calculate the moving average
         xs = np.convolve(x, k, mode="valid")
         ys = np.convolve(y, k, mode="valid")
         return list(zip(xs, ys))
 
-    def calculate_velocity_dynamic(
-        self, positions: CoordinateList, time_intervals: list[float]
-    ) -> list[float]:
-        """Calculate velocity dynamically."""
-        return [
-            np.sqrt(
-                (positions[i][0] - positions[i - 1][0]) ** 2
-                + (positions[i][1] - positions[i - 1][1]) ** 2
-            )
-            / time_intervals[i]
-            for i in range(1, len(positions))
-        ]
-
-    def calculate_acceleration_dynamic(
-        self, velocities: list[float], time_intervals: list[float]
-    ) -> list[float]:
-        """Calculate acceleration dynamically."""
-        return [
-            (velocities[i] - velocities[i - 1]) / time_intervals[i + 1]
-            for i in range(1, len(velocities))
-        ]
-
     def process_frames(
         self, skill: Skill, handedness: Handedness
     ) -> VideoAnalysisResponse:
-        """Process video frames, detect pose, and calculate metrics."""
+        """
+        Process video frames, detect pose, and calculate metrics.
+
+        Returns:
+            A dictionary containing
+            - grade: GradingOutcome
+            - used_angles_data: list[dict[str, float] | None]
+            - processed_video: str
+        """
         cap = cv2.VideoCapture(self.video_path)
         org_fps = cap.get(cv2.CAP_PROP_FPS)
 
@@ -139,86 +135,155 @@ class VideoProcessor:
         cap.release()
         return self.process_metrics(org_fps, skill, handedness)
 
+    def __derivative(self, positions: np.ndarray) -> np.ndarray:
+        return np.diff(positions, axis=0) / self.time_intervals[1:]
+
+    def calculate_velocity(self, positions: CoordinateList) -> np.ndarray:
+        displacement = np.linalg.norm(
+            np.diff(positions, axis=0),
+            axis=1,
+        )
+        return displacement / self.time_intervals[1:]
+
+    def calculate_acceleration(self, velocities: np.ndarray) -> np.ndarray:
+        return self.__derivative(velocities)
+
+    def _find_analysis_window(self) -> Tuple[int, int, int]:
+        """
+        Calculates kinematics to identify the key start, peak, and end frames for analysis.
+
+        Returns:
+            A tuple containing (start_index, peak_frame_index, end_index).
+        """
+        # 1. Calculate kinematics to find the initial peak acceleration
+        smoothed_positions = self.moving_average(
+            self.right_hand_positions,
+            window_size=SMOOTHING_WINDOW_SIZE,
+        )
+        velocities = self.calculate_velocity(smoothed_positions)
+        accelerations = self.calculate_acceleration(velocities)
+
+        # The offset accounts for the frames lost during velocity/acceleration calculation
+        initial_peak_acc_index = np.argmax(accelerations) + PEAK_ACCELERATION_OFFSET
+
+        # 2. Refine the peak frame by finding the lowest hand position in a small window
+        #    around the peak acceleration. This often corresponds to the "impact" frame.
+        search_start = max(
+            0, initial_peak_acc_index - IMPACT_FRAME_SEARCH_WINDOW_BEFORE
+        )
+        search_end = min(
+            len(self.right_hand_positions),
+            initial_peak_acc_index + IMPACT_FRAME_SEARCH_WINDOW_AFTER,
+        )
+
+        sub_range_positions = self.right_hand_positions[search_start:search_end]
+
+        peak_frame = initial_peak_acc_index
+        if sub_range_positions:
+            # In image coordinates, a higher Y value means a lower position on the screen
+            y_values = [pos[1] for pos in sub_range_positions]
+            lowest_hand_relative_index = np.argmax(y_values)
+            peak_frame = search_start + lowest_hand_relative_index
+
+        # 3. Find the end of the motion using a custom elbow metric
+        subset_elbow_pos = self.right_elbow_positions[peak_frame:]
+        # This metric (x-y) seems to identify a specific point in the follow-through
+        composite_metric = [(pos[0] - pos[1]) for pos in subset_elbow_pos]
+        relative_end_index = np.argmax(composite_metric)
+        end_frame = peak_frame + relative_end_index
+
+        # 4. Define the final clip range with padding
+        start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
+        final_end_frame = min(len(self.frames), end_frame)
+
+        return int(start_frame), int(peak_frame), int(final_end_frame)
+
+    def _calculate_grade(
+        self, skill: Skill, handedness: Handedness, window: Tuple[int, int, int]
+    ) -> GradingOutcome:
+        """
+        Computes angles at key frames and uses the grader to get a score.
+
+        Args:
+            skill: The skill being analyzed.
+            handedness: The handedness of the user.
+            window: A tuple of (start_index, peak_frame_index, end_index).
+
+        Returns:
+            The grading dictionary from the grader.
+        """
+        start, peak, end = window
+
+        # Define the 5 key frames for angle calculation
+        key_frames_indices = (
+            start,
+            (start + peak) // 2,
+            peak,
+            (peak + end) // 2,
+            end,
+        )
+
+        angle_lists = [self.compute_angles(self.frames[i]) for i in key_frames_indices]
+
+        # Dynamically get and use the grader
+        grader = GraderRegistry.get(skill, handedness)
+        return grader.grade(angle_lists)
+
+    def _create_video_clip_base64(
+        self, start_frame: int, end_frame: int, org_fps: float
+    ) -> str:
+        """
+        Saves a video segment to a file and returns it as a base64 encoded string.
+
+        Args:
+            start_frame: The starting frame of the clip.
+            end_frame: The ending frame of the clip.
+            org_fps: The original frames per second of the video.
+
+        Returns:
+            A base64 encoded string of the video clip.
+        """
+        output_path = self.save_video_segment(start_frame, end_frame, org_fps)
+        try:
+            with open(output_path, "rb") as f:
+                video_data = f.read()
+            return base64.b64encode(video_data).decode("utf-8")
+        finally:
+            # Clean up the temporary file if desired
+            # os.remove(output_path)
+            pass
+
     def process_metrics(
         self, org_fps: float, skill: Skill, handedness: Handedness
     ) -> VideoAnalysisResponse:
-        """Calculate velocities, accelerations, and save results."""
-        response: VideoAnalysisResponse = {
-            "grade": {"total_grade": 0, "grading_details": []},
-            "used_angles_data": [],
-            "processed_video": "",
+        """
+        Orchestrates the video analysis process: finds key frames, grades the motion,
+        and generates a processed video clip.
+        """
+        # Use a "guard clause" for cleaner code and to handle edge cases first
+        if len(self.right_hand_positions) <= 2:
+            return {
+                "grade": {"total_grade": 0, "grading_details": []},
+                "used_angles_data": [],
+                "processed_video": "",
+            }
+
+        # 1. Identify the relevant frames for analysis
+        start_index, peak_frame, end_index = self._find_analysis_window()
+
+        # 2. Calculate the grade based on angles at key moments
+        analysis_window = (start_index, peak_frame, end_index)
+        grade = self._calculate_grade(skill, handedness, analysis_window)
+
+        # 3. Create the processed video clip and encode it
+        video_base64 = self._create_video_clip_base64(start_index, end_index, org_fps)
+
+        # 4. Assemble and return the final response
+        return {
+            "grade": grade,
+            "used_angles_data": [],  # This can be populated if needed
+            "processed_video": video_base64,
         }
-
-        if len(self.right_hand_positions) > 2:
-            # Smooth positions and calculate velocities/accelerations
-            smoothed_positions = self.moving_average(
-                self.right_hand_positions, window_size=5
-            )
-            velocities = self.calculate_velocity_dynamic(
-                smoothed_positions, self.time_intervals
-            )
-            accelerations = self.calculate_acceleration_dynamic(
-                velocities, self.time_intervals
-            )
-
-            # Find peak acceleration
-            peak_acc_index = np.argmax(accelerations) + 2
-
-            # Define a smaller range around the peak acceleration
-            range_start = max(0, peak_acc_index - 15)
-            range_end = min(len(self.right_hand_positions), peak_acc_index + 20)
-
-            # Use the range to extract the right hand positions
-            sub_range_positions = self.right_hand_positions[range_start:range_end]
-
-            # Find the frame within this range with the lowest right hand position
-            final_peak_frame = peak_acc_index
-            if sub_range_positions:
-                y_values = [pos[1] for pos in sub_range_positions]
-                lowest_hand_relative_index = np.argmax(y_values)
-                final_peak_frame = range_start + lowest_hand_relative_index
-
-            # Find frame where elbow position satisfies custom metric
-            subset_positions = self.right_elbow_positions[final_peak_frame:]
-            composite_metric = [(pos[0] - pos[1]) for pos in subset_positions]
-            relative_max_y_index = np.argmax(composite_metric)
-            max_y_index = final_peak_frame + relative_max_y_index
-
-            # Define frame range
-            start_index = max(0, final_peak_frame - 30)
-            end_index = min(len(self.frames), max_y_index)
-
-            # Calculate angles for the selected frames
-            angle_lists = [
-                self.compute_angles(self.frames[i])
-                for i in (
-                    start_index,
-                    (start_index + final_peak_frame) // 2,
-                    final_peak_frame,
-                    (final_peak_frame + max_y_index) // 2,
-                    end_index,
-                )
-            ]
-
-            # Dynamically get and use the grader
-            grader = GraderRegistry.get(skill, handedness)
-            grade = grader.grade(angle_lists)
-
-            # Save video segment
-            output_path = self.save_video_segment(
-                int(start_index), int(end_index), org_fps
-            )
-
-            # Open the video file and encode it to base64
-            with open(output_path, "rb") as f:
-                video_data = f.read()
-            video_base64 = base64.b64encode(video_data).decode("utf-8")
-
-            # Return the response
-            response["grade"] = grade
-            response["processed_video"] = video_base64
-            return response
-        return response
 
     def save_video_segment(
         self, start_index: int, end_index: int, org_fps: float
@@ -255,7 +320,7 @@ class VideoProcessor:
                         angle = self.pose_detector.compute_angle(
                             point_a, point_b, point_c
                         )
-                        if angle is not None:
+                        if angle is not None and isinstance(angle, float):
                             self.pose_detector.show_angle_arc(
                                 frame, point_a, point_b, point_c, angle
                             )
@@ -281,7 +346,7 @@ class VideoProcessor:
                 point_c = landmarks[point_c_id]
 
                 angle = self.pose_detector.compute_angle(point_a, point_b, point_c)
-                if angle is not None:
+                if angle is not None and isinstance(angle, float):
                     angles[joint_name] = angle
                     self.pose_detector.logger.info(
                         f"{joint_name} Angle: {angle:.2f} degrees"
