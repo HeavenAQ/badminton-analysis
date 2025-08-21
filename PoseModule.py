@@ -4,6 +4,7 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 from cv2.typing import MatLike
+from numpy.typing import NDArray
 from ultralytics import YOLO
 
 from Logger import Logger
@@ -127,7 +128,7 @@ class PoseDetector:
         point_a: tuple[float, float],
         point_b: tuple[float, float],
         point_c: tuple[float, float],
-    ) -> Optional[float]:
+    ) -> Optional[float | NDArray[Any]]:
         """
         Computes the angle between three 2D points.
 
@@ -140,9 +141,9 @@ class PoseDetector:
             float: The angle in degrees between the three points.
         """
         # Get the coordinates of the points
-        a = np.array(point_a, dtype=np.float64)
-        b = np.array(point_b, dtype=np.float64)
-        c = np.array(point_c, dtype=np.float64)
+        a = np.asarray(point_a, dtype=np.float64)
+        b = np.asarray(point_b, dtype=np.float64)
+        c = np.asarray(point_c, dtype=np.float64)
 
         # Get vectors
         vector_ba = a - b
@@ -163,7 +164,7 @@ class PoseDetector:
 
         # Compute the angle in radians and convert it to degree
         angle_radian = np.arccos(cos_theta)
-        return np.degrees(angle_radian)
+        return np.rad2deg(angle_radian)
 
     def show_pose(self, img: MatLike, landmarks: Optional[BodyCoordinateDict]) -> None:
         """
@@ -236,9 +237,9 @@ class PoseDetector:
         thickness: int = 2,
     ) -> None:
         # Convert points to NumPy arrays
-        a = np.array(point_a, dtype=np.float64)
-        b = np.array(point_b, dtype=np.float64)
-        c = np.array(point_c, dtype=np.float64)
+        a = np.asarray(point_a, dtype=np.float64)
+        b = np.asarray(point_b, dtype=np.float64)
+        c = np.asarray(point_c, dtype=np.float64)
 
         # Vectors from point_b to point_a and point_b to point_c
         ba = a - b
