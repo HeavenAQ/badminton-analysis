@@ -3,8 +3,7 @@ from unittest.mock import patch, MagicMock
 from Grader import (
     Grader,
     GraderRegistry,
-    ServeRightHandedGrader,
-    ServeLeftHandedGrader,
+    ServeGrader,
     AngleDict,
     serve_angle_grader,
 )
@@ -15,8 +14,13 @@ class TestServeAngleGrader:
     @patch("Grader.serve_mean")
     @patch("Grader.serve_std")
     def test_serve_angle_grader_within_range(self, mock_std, mock_mean):
-        mock_mean.loc = MagicMock(return_value=90)
-        mock_std.loc = MagicMock(return_value=10)
+        mock_mean_loc = MagicMock()
+        mock_mean_loc.__getitem__.return_value = 80  # Expected mean value
+        mock_mean.loc = mock_mean_loc
+
+        mock_std_loc = MagicMock()
+        mock_std_loc.__getitem__.return_value = 10  # Expected std value
+        mock_std.loc = mock_std_loc
 
         angle_dict: AngleDict = {"Right Shoulder": 85}
         result = serve_angle_grader(10, "Right Shoulder", "check1", angle_dict)
@@ -26,8 +30,13 @@ class TestServeAngleGrader:
     @patch("Grader.serve_mean")
     @patch("Grader.serve_std")
     def test_serve_angle_grader_below_range(self, mock_std, mock_mean):
-        mock_mean.loc = MagicMock(return_value=90)
-        mock_std.loc = MagicMock(return_value=10)
+        mock_mean_loc = MagicMock()
+        mock_mean_loc.__getitem__.return_value = 90  # Expected mean value
+        mock_mean.loc = mock_mean_loc
+
+        mock_std_loc = MagicMock()
+        mock_std_loc.__getitem__.return_value = 10  # Expected std value
+        mock_std.loc = mock_std_loc
 
         angle_dict: AngleDict = {"Right Shoulder": 70}
         result = serve_angle_grader(10, "Right Shoulder", "check1", angle_dict)
@@ -53,7 +62,7 @@ class TestGraderRegistry:
 
 class TestServeRightHandedGrader:
     def setup_method(self):
-        self.grader = ServeRightHandedGrader()
+        self.grader = ServeGrader(Handedness.RIGHT)
 
     def test_grade_checkpoint_1_arms_with_none_angle(self):
         result = self.grader.grade_checkpoint_1_arms(None)
@@ -117,11 +126,10 @@ class TestServeRightHandedGrader:
 
 class TestServeLeftHandedGrader:
     def test_grade_returns_empty_outcome(self):
-        grader = ServeLeftHandedGrader()
+        grader = ServeGrader(Handedness.LEFT)
         angles: list[AngleDict] = [{}]
 
         result = grader.grade(angles)
 
         assert result["total_grade"] == 0
         assert result["grading_details"] == []
-

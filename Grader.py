@@ -113,7 +113,7 @@ class ServeGrader(Grader):
         non_dominant = (
             Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
         )
-        return f"{str(non_dominant)} Shoulder"
+        return f"{str(non_dominant).capitalize()} Shoulder"
 
     @property
     def dominant_crotch(self) -> str:
@@ -124,7 +124,7 @@ class ServeGrader(Grader):
         non_dominant = (
             Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
         )
-        return f"{str(non_dominant)} Crotch"
+        return f"{str(non_dominant).capitalize()} Crotch"
 
     @property
     def dominant_elbow(self) -> str:
@@ -206,6 +206,12 @@ class ServeGrader(Grader):
         # full score for this frame: 20
 
     def grade(self, angles: AngleDicts) -> GradingOutcome:
+        if len(angles) < 5:
+            return {
+                "grading_details": [],
+                "total_grade": 0,
+            }
+
         # full score for this: 100
         check1_arms = self.grade_checkpoint_1_arms(angles[0])
         check1_legs = self.grade_checkpoint_1_legs(angles[0])
