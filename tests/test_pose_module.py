@@ -93,6 +93,17 @@ class TestPoseDetector:
         landmarks = self.detector.get_2d_landmarks(results)
         assert landmarks is None
 
+    def test_get_pose_method(self):
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        with patch.object(self.detector.model, 'predict') as mock_predict:
+            mock_predict.return_value = "mock_results"
+            
+            result = self.detector.get_pose(img)
+            
+            mock_predict.assert_called_once_with(img, conf=0.5)
+            assert result == "mock_results"
+
     def test_get_2d_landmarks_with_keypoints(self):
         mock_results = MagicMock()
         mock_keypoints = MagicMock()
@@ -115,3 +126,42 @@ class TestPoseDetector:
 
         assert isinstance(landmarks, dict)
         assert len(landmarks) == 2
+
+    @patch("PoseModule.cv2.ellipse")
+    @patch.object(PoseDetector, "_PoseDetector__add_text_with_pillow")
+    def test_show_angle_arc(self, mock_add_text, mock_ellipse):
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        point_a = (100, 200)
+        point_b = (150, 150)
+        point_c = (200, 200)
+        angle = 90.0
+        
+        self.detector.show_angle_arc(img, point_a, point_b, point_c, angle)
+        
+        mock_ellipse.assert_called_once()
+        mock_add_text.assert_called_once()
+
+    @patch("PoseModule.Image.fromarray")
+    @patch("PoseModule.cv2.cvtColor")
+    @patch("PoseModule.np.copyto")
+    def test_add_text_with_pillow(self, mock_copyto, mock_cvtcolor, mock_from_array):
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        text = "Test°"
+        position = (100, 100)
+        
+        mock_pil_image = MagicMock()
+        mock_draw = MagicMock()
+        mock_from_array.return_value = mock_pil_image
+        
+        with patch("PoseModule.ImageDraw.Draw", return_value=mock_draw):
+            with patch("PoseModule.ImageFont.load_default") as mock_font:
+                mock_font.return_value = "mock_font"
+                
+                # Access the private method for testing
+                self.detector._PoseDetector__add_text_with_pillow(
+                    img, text, position
+                )
+                
+                mock_draw.text.assert_called_once_with(
+                    position, text, font="mock_font", fill=(255, 255, 255)
+                )

@@ -125,11 +125,54 @@ class TestServeRightHandedGrader:
 
 
 class TestServeLeftHandedGrader:
+    def setup_method(self):
+        self.grader = ServeGrader(Handedness.LEFT)
+
     def test_grade_returns_empty_outcome(self):
-        grader = ServeGrader(Handedness.LEFT)
         angles: list[AngleDict] = [{}]
 
-        result = grader.grade(angles)
+        result = self.grader.grade(angles)
 
         assert result["total_grade"] == 0
         assert result["grading_details"] == []
+
+    def test_dominant_shoulder_property(self):
+        assert self.grader.dominant_shoulder == "Left Shoulder"
+
+    def test_non_dominant_shoulder_property(self):
+        assert self.grader.non_dominant_shoulder == "Right Shoulder"
+
+    def test_dominant_crotch_property(self):
+        assert self.grader.dominant_crotch == "Left Crotch"
+
+    def test_non_dominant_crotch_property(self):
+        assert self.grader.non_dominant_crotch == "Right Crotch"
+
+    def test_dominant_elbow_property(self):
+        assert self.grader.dominant_elbow == "Left Elbow"
+
+    def test_dominant_shoulder_elbow_property(self):
+        assert self.grader.dominant_shoulder_elbow == "Nose Left Shoulder Elbow"
+
+
+class TestServeRightHandedGraderProperties:
+    def setup_method(self):
+        self.grader = ServeGrader(Handedness.RIGHT)
+
+    def test_dominant_shoulder_property(self):
+        assert self.grader.dominant_shoulder == "Right Shoulder"
+
+    def test_non_dominant_shoulder_property(self):
+        assert self.grader.non_dominant_shoulder == "Left Shoulder"
+
+    def test_dominant_crotch_property(self):
+        assert self.grader.dominant_crotch == "Right Crotch"
+
+    def test_non_dominant_crotch_property(self):
+        assert self.grader.non_dominant_crotch == "Left Crotch"
+
+    def test_dominant_elbow_property(self):
+        assert self.grader.dominant_elbow == "Right Elbow"
+
+    def test_dominant_shoulder_elbow_property(self):
+        assert self.grader.dominant_shoulder_elbow == "Nose Right Shoulder Elbow"
