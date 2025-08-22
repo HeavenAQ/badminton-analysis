@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Dict, Tuple, Type
 import pandas as pd
 from Types import GradingDetail, GradingOutcome, Handedness, Skill
 
@@ -47,6 +48,9 @@ class Grader(ABC):
     Base class for all graders. Each grader should implement the `grade` method.
     """
 
+    def __init__(self, handedness: Handedness):
+        self.handedness = handedness
+
     @abstractmethod
     def grade(self, angles: AngleDicts) -> GradingOutcome:
         """
@@ -62,10 +66,10 @@ class Grader(ABC):
 
 
 class GraderRegistry:
-    _registry = {}
+    _registry: Dict[Tuple[Skill, Handedness], Type[Grader]] = {}
 
     @classmethod
-    def register(cls, skill: Skill, handedness: Handedness, grader_class: type):
+    def register(cls, skill: Skill, handedness: Handedness, grader_class: Type[Grader]):
         """
         Register a grader class for a specific skill and handedness.
 
@@ -93,10 +97,43 @@ class GraderRegistry:
             raise ValueError(
                 f"No grader registered for skill={skill}, handedness={handedness}"
             )
-        return grader_class()
+        return grader_class(handedness)
 
 
-class ServeRightHandedGrader(Grader):
+class ServeGrader(Grader):
+    def __init__(self, handedness: Handedness):
+        super().__init__(handedness)
+
+    @property
+    def dominant_shoulder(self) -> str:
+        return f"{str(self.handedness).capitalize()} Shoulder"
+
+    @property
+    def non_dominant_shoulder(self) -> str:
+        non_dominant = (
+            Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
+        )
+        return f"{str(non_dominant).capitalize()} Shoulder"
+
+    @property
+    def dominant_crotch(self) -> str:
+        return f"{str(self.handedness).capitalize()} Crotch"
+
+    @property
+    def non_dominant_crotch(self) -> str:
+        non_dominant = (
+            Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
+        )
+        return f"{str(non_dominant).capitalize()} Crotch"
+
+    @property
+    def dominant_elbow(self) -> str:
+        return f"{str(self.handedness).capitalize()} Elbow"
+
+    @property
+    def dominant_shoulder_elbow(self) -> str:
+        return f"Nose {str(self.handedness).capitalize()} Shoulder Elbow"
+
     def grade_checkpoint_1_arms(self, angle_dict: AngleDict) -> float:
         """
         The preparation phase of the serve. Full score for this checkpoint: 20
@@ -104,8 +141,8 @@ class ServeRightHandedGrader(Grader):
         if not angle_dict:
             return 0
         grade = 0
-        grade += serve_angle_grader(5, "Right Shoulder", "check1", angle_dict)
-        grade += serve_angle_grader(5, "Left Shoulder", "check1", angle_dict)
+        grade += serve_angle_grader(5, self.dominant_shoulder, "check1", angle_dict)
+        grade += serve_angle_grader(5, self.non_dominant_shoulder, "check1", angle_dict)
         return grade
 
     def grade_checkpoint_1_legs(self, angle_dict: AngleDict) -> float:
@@ -114,7 +151,7 @@ class ServeRightHandedGrader(Grader):
         """
         if not angle_dict:
             return 0
-        if angle_dict["Right Crotch"] <= angle_dict["Left Crotch"]:
+        if angle_dict[self.dominant_crotch] <= angle_dict[self.non_dominant_crotch]:
             return 10
         return 0
 
@@ -125,9 +162,12 @@ class ServeRightHandedGrader(Grader):
         if not angle_dict1 or not angle_dict2:
             return 0
         grade = 0
-        if angle_dict1["Right Crotch"] < angle_dict2["Right Crotch"]:
+        if angle_dict1[self.dominant_crotch] < angle_dict2[self.dominant_crotch]:
             grade += 10
-        if angle_dict1["Left Crotch"] > angle_dict2["Left Crotch"]:
+        if (
+            angle_dict1[self.non_dominant_crotch]
+            > angle_dict2[self.non_dominant_crotch]
+        ):
             grade += 10
         return grade
 
@@ -138,7 +178,7 @@ class ServeRightHandedGrader(Grader):
         grade = 0
         if not angle_dict:
             return grade
-        if angle_dict["Right Crotch"] > angle_dict["Left Crotch"]:
+        if angle_dict[self.dominant_crotch] > angle_dict[self.non_dominant_crotch]:
             grade += 20
         return grade
 
@@ -149,7 +189,7 @@ class ServeRightHandedGrader(Grader):
         grade = 0
         if not angle_dict:
             return grade
-        grade += serve_angle_grader(20, "Right Elbow", "check4", angle_dict)
+        grade += serve_angle_grader(20, self.dominant_elbow, "check4", angle_dict)
         return grade
 
     def grade_checkpoint_5(self, angle: AngleDict) -> float:
@@ -159,13 +199,19 @@ class ServeRightHandedGrader(Grader):
         grade = 0
         if not angle:
             return grade
-        grade += serve_angle_grader(10, "Right Shoulder", "check5", angle)
-        grade += serve_angle_grader(10, "Nose Right Shoulder Elbow", "check5", angle)
+        grade += serve_angle_grader(10, self.dominant_shoulder, "check5", angle)
+        grade += serve_angle_grader(10, self.dominant_shoulder_elbow, "check5", angle)
         return grade
 
         # full score for this frame: 20
 
     def grade(self, angles: AngleDicts) -> GradingOutcome:
+        if len(angles) < 5:
+            return {
+                "grading_details": [],
+                "total_grade": 0,
+            }
+
         # full score for this: 100
         check1_arms = self.grade_checkpoint_1_arms(angles[0])
         check1_legs = self.grade_checkpoint_1_legs(angles[0])
@@ -178,7 +224,7 @@ class ServeRightHandedGrader(Grader):
             {"description": "雙手平舉", "grade": check1_arms},
             {"description": "將重心放至持拍腳", "grade": check1_legs},
             {"description": "身體重心轉移至非持拍腳", "grade": check2},
-            {"description": "髖關節前旋", "grade": check4},
+            {"description": "髖關節前旋", "grade": check3},
             {"description": "持拍手手腕發力", "grade": check4},
             {"description": "肩膀旋轉朝前", "grade": check5},
         ]
@@ -189,14 +235,5 @@ class ServeRightHandedGrader(Grader):
         }
 
 
-class ServeLeftHandedGrader(Grader):
-    def grade(self, angles: AngleDicts) -> GradingOutcome:
-        print(angles)
-        return {"grading_details": [], "total_grade": 0}
-        # Example grading logic for right-handed serve
-        # score = 100 - abs(angles[1]["Left Shoulder"] - 90)
-        # return max(0, score)
-
-
-GraderRegistry.register(Skill.SERVE, Handedness.LEFT, ServeLeftHandedGrader)
-GraderRegistry.register(Skill.SERVE, Handedness.RIGHT, ServeRightHandedGrader)
+GraderRegistry.register(Skill.SERVE, Handedness.LEFT, ServeGrader)
+GraderRegistry.register(Skill.SERVE, Handedness.RIGHT, ServeGrader)

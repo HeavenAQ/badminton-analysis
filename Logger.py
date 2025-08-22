@@ -5,10 +5,12 @@ from typing import Callable
 
 
 def log_with_frame_info(log_method: Callable):
+    # wraps decorator ensures the inspect functions pointing to the callback function
     @wraps(log_method)
     def wrapper(message: str):
         frame = inspect.currentframe()
         try:
+            # refer to the caller
             if frame and frame.f_back:
                 caller = frame.f_back
                 enhanced_message = (
