@@ -114,6 +114,84 @@ class GraderRegistry:
         return grader_class(handedness)
 
 
+class FootworkGrader(Grader):
+    ORIGIN_TOLERANCE_RATE = 0.35
+    ORIGIN_FRAME = 5
+
+    def __init__(self, handedness: Handedness):
+        super().__init__(handedness)
+        self.dominant_foot, self.non_dominant_foot = self.feet
+
+    @property
+    def feet(
+        self,
+    ) -> Tuple[
+        COCOKeypoints,
+        COCOKeypoints,
+    ]:
+        keypoint_map = {
+            Handedness.RIGHT: (COCOKeypoints.RIGHT_ANKLE, COCOKeypoints.LEFT_ANKLE),
+            Handedness.LEFT: (COCOKeypoints.LEFT_ANKLE, COCOKeypoints.RIGHT_ANKLE),
+        }
+        return keypoint_map[self.handedness]
+
+    def __calc_distance(self, a: Coordinate, b: Coordinate):
+        x = a[0] - b[0]
+        y = a[1] - b[1]
+        return (x**2 + y**2) ** 0.5
+
+    def __calc_center(self, a: Coordinate, b: Coordinate):
+        return (
+            (a[0] + b[0]) / 2,
+            (a[1] + b[1]) / 2,
+        )
+
+    def __get_origin_range(
+        self, dom_foot_coord: Coordinate, non_dominant_foot: Coordinate
+    ) -> Tuple[Coordinate, float]:
+        """
+        Compute the origin of the player's standing position and calculate the tolerable range
+
+        Args:
+            dom_foot_coord: The coordinate of the dominant foot
+            non_dom_foot_coord: The coordinate of the non-dominant foot
+
+        Returns:
+            center: the coordinate of the standing position of the player
+            tolerance: the tolerable range for the player to move back
+        """
+        stance_width = self.__calc_distance(dom_foot_coord, non_dominant_foot)
+        tolerance = stance_width * FootworkGrader.ORIGIN_TOLERANCE_RATE
+        center = self.__calc_center(dom_foot_coord, non_dominant_foot)
+        return center, tolerance
+
+    def __within_origin(
+        self,
+        origin: Coordinate,
+        tolerance: float,
+        dom_foot_coord: Coordinate,
+        non_dom_foot_coord: Coordinate,
+    ):
+        center = self.__calc_center(dom_foot_coord, non_dom_foot_coord)
+        dom_within = abs(center[0] - origin[0]) <= tolerance
+        non_dom_within = abs(center[1] - origin[1]) <= tolerance
+        return dom_within and non_dom_within
+
+    def grade(self, grader_input: GraderInput) -> GraderResult:
+        if not grader_input or not isinstance(grader_input, dict):
+            return EMPTY_GRADER_RESULT
+        body_coordinates = cast(CoordinatesDict, grader_input)
+
+        # Get the coordinates of feet
+        dom_foot_coords = body_coordinates[self.dominant_foot]
+        non_dom_foot_coords = body_coordinates[self.non_dominant_foot]
+        origin, tolerance = self.__get_origin_range(
+            dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+            non_dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+        )
+        pass
+
+
 class ServeGrader(Grader):
     def __init__(self, handedness: Handedness):
         super().__init__(handedness)

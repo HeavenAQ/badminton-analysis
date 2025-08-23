@@ -112,7 +112,7 @@ class VideoProcessor:
                 results = self.pose_detector.get_pose(frame)
                 landmarks = self.pose_detector.get_2d_landmarks(results)
                 if landmarks:
-                    self.normalizer.normalize_pose(landmarks)
+                    landmarks = self.normalizer.normalize_pose(landmarks)
                     self.landmarks.append(landmarks)
 
                     wrist = (

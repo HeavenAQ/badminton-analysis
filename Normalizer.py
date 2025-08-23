@@ -18,7 +18,7 @@ class BodyCentricNormalizer:
         # calculate center parts and the origin
         mid_hip = (right_hip + left_hip) / 2
         mid_shoulder = (right_shoulder + left_shoulder) / 2
-        mid_body = (mid_hip + right_hip) / 2
+        mid_body = (mid_hip + mid_shoulder) / 2
 
         # x-axis (left -> right)
         shoulder_vector = right_shoulder - left_shoulder
@@ -52,7 +52,9 @@ class BodyCentricNormalizer:
             translated_landmarks[joint] = (x_coord, y_coord)
         return translated_landmarks
 
-    def __normalize_scale(self, landmarks: CoordinateDict) -> CoordinateDict:
+    def __normalize_by_shoulder_width(
+        self, landmarks: CoordinateDict
+    ) -> CoordinateDict:
         """
         Normalize the scale to avoid the difference between of body length caused by the distance between camera and body
         """
@@ -81,4 +83,4 @@ class BodyCentricNormalizer:
         translated_landmarks = self.__apply_matrix_transformation(
             landmarks, body_system
         )
-        return self.__normalize_scale(translated_landmarks)
+        return self.__normalize_by_shoulder_width(translated_landmarks)
