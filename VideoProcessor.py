@@ -7,12 +7,13 @@ import cv2
 import numpy as np
 from queue import Queue
 from Grader import GraderRegistry
+from Normalizer import BodyCentricNormalizer
 from PoseModule import PoseDetector
 from Joints import JOINTS
 from Types import (
     COCOKeypoints,
-    CoordinateList,
-    GradingOutcome,
+    Coordinates,
+    GraderResult,
     Handedness,
     Skill,
     VideoAnalysisResponse,
@@ -33,8 +34,9 @@ class VideoProcessor:
         self.out_filename = out_filename
         self.output_folder = output_folder
         self.pose_detector = PoseDetector()
-        self.right_hand_positions = []
-        self.right_elbow_positions = []
+        self.normalizer = BodyCentricNormalizer()
+        self.hand_positions: Coordinates = []
+        self.elbow_positions: Coordinates = []
         self.time_intervals = []
         self.frames = []
         self.landmarks = []
@@ -42,10 +44,10 @@ class VideoProcessor:
 
     def moving_average(
         self,
-        positions: CoordinateList,
+        positions: Coordinates,
         window_size: int = 5,
         pad_mode: Literal["edge"] | Literal["reflect"] = "edge",
-    ) -> CoordinateList:
+    ) -> Coordinates:
         """Smooth positions using a moving average."""
         # convert positions to numpy array
         pos = np.asarray(positions, dtype=float)  # shape (N, 2)
@@ -109,8 +111,10 @@ class VideoProcessor:
                 # Pose estimation
                 results = self.pose_detector.get_pose(frame)
                 landmarks = self.pose_detector.get_2d_landmarks(results)
-                self.landmarks.append(landmarks)
                 if landmarks:
+                    self.normalizer.normalize_pose(landmarks)
+                    self.landmarks.append(landmarks)
+
                     wrist = (
                         COCOKeypoints.RIGHT_WRIST
                         if handedness == Handedness.RIGHT
@@ -124,10 +128,10 @@ class VideoProcessor:
                     wrist = landmarks.get(wrist)
                     elbow = landmarks.get(elbow)
                     if wrist:
-                        self.right_hand_positions.append(wrist)
+                        self.hand_positions.append(wrist)
                         self.frames.append(frame.copy())
                     if elbow:
-                        self.right_elbow_positions.append(elbow)
+                        self.elbow_positions.append(elbow)
             else:
                 if not capture_thread.is_alive():
                     break
@@ -138,7 +142,7 @@ class VideoProcessor:
     def __derivative(self, positions: np.ndarray) -> np.ndarray:
         return np.diff(positions, axis=0) / self.time_intervals[1:]
 
-    def calculate_velocity(self, positions: CoordinateList) -> np.ndarray:
+    def calculate_velocity(self, positions: Coordinates) -> np.ndarray:
         displacement = np.linalg.norm(
             np.diff(positions, axis=0),
             axis=1,
@@ -157,7 +161,7 @@ class VideoProcessor:
         """
         # 1. Calculate kinematics to find the initial peak acceleration
         smoothed_positions = self.moving_average(
-            self.right_hand_positions,
+            self.hand_positions,
             window_size=SMOOTHING_WINDOW_SIZE,
         )
         velocities = self.calculate_velocity(smoothed_positions)
@@ -172,11 +176,11 @@ class VideoProcessor:
             0, initial_peak_acc_index - IMPACT_FRAME_SEARCH_WINDOW_BEFORE
         )
         search_end = min(
-            len(self.right_hand_positions),
+            len(self.hand_positions),
             initial_peak_acc_index + IMPACT_FRAME_SEARCH_WINDOW_AFTER,
         )
 
-        sub_range_positions = self.right_hand_positions[search_start:search_end]
+        sub_range_positions = self.hand_positions[search_start:search_end]
 
         peak_frame = initial_peak_acc_index
         if sub_range_positions:
@@ -186,7 +190,7 @@ class VideoProcessor:
             peak_frame = search_start + lowest_hand_relative_index
 
         # 3. Find the end of the motion using a custom elbow metric
-        subset_elbow_pos = self.right_elbow_positions[peak_frame:]
+        subset_elbow_pos = self.elbow_positions[peak_frame:]
         # This metric (x-y) seems to identify a specific point in the follow-through
         composite_metric = [(pos[0] - pos[1]) for pos in subset_elbow_pos]
         relative_end_index = np.argmax(composite_metric)
@@ -200,7 +204,7 @@ class VideoProcessor:
 
     def _calculate_grade(
         self, skill: Skill, handedness: Handedness, window: Tuple[int, int, int]
-    ) -> GradingOutcome:
+    ) -> GraderResult:
         """
         Computes angles at key frames and uses the grader to get a score.
 
@@ -261,7 +265,7 @@ class VideoProcessor:
         and generates a processed video clip.
         """
         # Use a "guard clause" for cleaner code and to handle edge cases first
-        if len(self.right_hand_positions) <= 2:
+        if len(self.hand_positions) <= 2:
             return {
                 "grade": {"total_grade": 0, "grading_details": []},
                 "used_angles_data": [],

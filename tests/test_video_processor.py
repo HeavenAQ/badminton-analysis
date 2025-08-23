@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, mock_open
 from VideoProcessor import VideoProcessor
-from Types import CoordinateList, Skill, Handedness
+from Types import Coordinates, Skill, Handedness
 
 
 class TestVideoProcessor:
@@ -19,7 +19,7 @@ class TestVideoProcessor:
         assert hasattr(self.processor, "pose_detector")
 
     def test_moving_average_basic(self):
-        positions: CoordinateList = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
+        positions: Coordinates = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
         smoothed = self.processor.moving_average(positions, window_size=3)
 
         assert len(smoothed) == len(positions)
@@ -27,7 +27,7 @@ class TestVideoProcessor:
         assert all(isinstance(pos, tuple) for pos in smoothed)
 
     def test_moving_average_edge_padding(self):
-        positions: CoordinateList = [(0, 0), (10, 10)]
+        positions: Coordinates = [(0, 0), (10, 10)]
         smoothed = self.processor.moving_average(
             positions, window_size=3, pad_mode="edge"
         )
@@ -37,7 +37,7 @@ class TestVideoProcessor:
         assert smoothed[0] == pytest.approx((3.33, 3.33), abs=0.1)
 
     def test_calculate_velocity_dynamic(self):
-        positions: CoordinateList = [(0, 0), (3, 4), (6, 8)]
+        positions: Coordinates = [(0, 0), (3, 4), (6, 8)]
 
         # Ensure time_intervals matches expected size
         self.processor.time_intervals = [0.1, 0.1]  # 2 intervals for 3 positions
@@ -127,18 +127,30 @@ class TestVideoProcessor:
     def test_find_analysis_window(self):
         # Setup data for the analysis window calculation
         num_frames = 100
-        self.processor.right_hand_positions = [(i, 100 - i) for i in range(num_frames)]
-        self.processor.right_elbow_positions = [(i, 50 - i//2) for i in range(num_frames)]
+        self.processor.hand_positions = [(i, 100 - i) for i in range(num_frames)]
+        self.processor.elbow_positions = [(i, 50 - i // 2) for i in range(num_frames)]
         self.processor.frames = [
             np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(num_frames)
         ]
-        
+
         # Mock the methods that have array size issues to focus on testing the window logic
-        with patch.object(self.processor, 'moving_average', return_value=[(i, 100-i) for i in range(num_frames)]):
-            with patch.object(self.processor, 'calculate_velocity', return_value=np.array([1.0] * (num_frames-1))):
-                with patch.object(self.processor, 'calculate_acceleration', return_value=np.array([0.1] * (num_frames-2))):
+        with patch.object(
+            self.processor,
+            "moving_average",
+            return_value=[(i, 100 - i) for i in range(num_frames)],
+        ):
+            with patch.object(
+                self.processor,
+                "calculate_velocity",
+                return_value=np.array([1.0] * (num_frames - 1)),
+            ):
+                with patch.object(
+                    self.processor,
+                    "calculate_acceleration",
+                    return_value=np.array([0.1] * (num_frames - 2)),
+                ):
                     start, peak, end = self.processor._find_analysis_window()
-        
+
         assert isinstance(start, int)
         assert isinstance(peak, int)
         assert isinstance(end, int)
@@ -149,16 +161,18 @@ class TestVideoProcessor:
         mock_grader = MagicMock()
         mock_grader.grade.return_value = {"total_grade": 85, "grading_details": []}
         mock_grader_get.return_value = mock_grader
-        
+
         self.processor.frames = [
             np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(10)
         ]
-        
-        with patch.object(self.processor, "compute_angles", return_value={"Right Elbow": 90}):
+
+        with patch.object(
+            self.processor, "compute_angles", return_value={"Right Elbow": 90}
+        ):
             result = self.processor._calculate_grade(
                 Skill.SERVE, Handedness.RIGHT, (0, 5, 9)
             )
-        
+
         assert result["total_grade"] == 85
         mock_grader.grade.assert_called_once()
 
@@ -166,10 +180,12 @@ class TestVideoProcessor:
     @patch("builtins.open", new_callable=mock_open, read_data=b"fake video data")
     def test_create_video_clip_base64(self, mock_file, mock_b64encode):
         mock_b64encode.return_value = b"encoded_data"
-        
-        with patch.object(self.processor, "save_video_segment", return_value="/tmp/test.mp4"):
+
+        with patch.object(
+            self.processor, "save_video_segment", return_value="/tmp/test.mp4"
+        ):
             result = self.processor._create_video_clip_base64(0, 10, 30.0)
-        
+
         assert result == "encoded_data"
         mock_b64encode.assert_called_once_with(b"fake video data")
 
@@ -178,11 +194,11 @@ class TestVideoProcessor:
             mock_process_frames.return_value = {
                 "grade": {"total_grade": 80, "grading_details": []},
                 "used_angles_data": [],
-                "processed_video": "encoded_video"
+                "processed_video": "encoded_video",
             }
-            
+
             result = self.processor.process_video(Skill.SERVE, Handedness.RIGHT)
-            
+
             assert result["grade"]["total_grade"] == 80
             mock_process_frames.assert_called_once_with(Skill.SERVE, Handedness.RIGHT)
 
