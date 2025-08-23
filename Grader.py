@@ -1,11 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, Type
+from typing import Dict, Tuple, Type, cast
 import pandas as pd
-from Types import GradingDetail, GradingOutcome, Handedness, Skill
+from Types import (
+    AngleDicts,
+    COCOKeypoints,
+    Coordinate,
+    CoordinatesDict,
+    GraderInput,
+    GradingDetail,
+    GraderResult,
+    Handedness,
+    AngleDict,
+    Skill,
+)
 
-# Types
-AngleDict = dict[str, float] | None
-AngleDicts = list[AngleDict]
 
 # Expert data
 serve_mean = pd.read_excel(
@@ -14,6 +22,12 @@ serve_mean = pd.read_excel(
 serve_std = pd.read_excel(
     "./stats/serve/expert angle stats.xlsx", sheet_name="std"
 ).set_index("Unnamed: 0")
+
+# Error Response
+EMPTY_GRADER_RESULT: GraderResult = {
+    "grading_details": [],
+    "total_grade": 0,
+}
 
 
 def serve_angle_grader(
@@ -52,7 +66,7 @@ class Grader(ABC):
         self.handedness = handedness
 
     @abstractmethod
-    def grade(self, angles: AngleDicts) -> GradingOutcome:
+    def grade(self, grader_input: GraderInput) -> GraderResult:
         """
         Abstract method to grade the performance based on angles.
 
@@ -205,20 +219,18 @@ class ServeGrader(Grader):
 
         # full score for this frame: 20
 
-    def grade(self, angles: AngleDicts) -> GradingOutcome:
-        if len(angles) < 5:
-            return {
-                "grading_details": [],
-                "total_grade": 0,
-            }
+    def grade(self, grader_input: GraderInput) -> GraderResult:
+        if not isinstance(grader_input, list) or len(grader_input) < 5:
+            return EMPTY_GRADER_RESULT
 
         # full score for this: 100
-        check1_arms = self.grade_checkpoint_1_arms(angles[0])
-        check1_legs = self.grade_checkpoint_1_legs(angles[0])
-        check2 = self.grade_checkpoint_2(angles[0], angles[1])
-        check3 = self.grade_checkpoint_3(angles[2])
-        check4 = self.grade_checkpoint_4(angles[3])
-        check5 = self.grade_checkpoint_5(angles[4])
+        angle_list = cast(AngleDicts, grader_input)
+        check1_arms = self.grade_checkpoint_1_arms(angle_list[0])
+        check1_legs = self.grade_checkpoint_1_legs(angle_list[0])
+        check2 = self.grade_checkpoint_2(angle_list[0], angle_list[1])
+        check3 = self.grade_checkpoint_3(angle_list[2])
+        check4 = self.grade_checkpoint_4(angle_list[3])
+        check5 = self.grade_checkpoint_5(angle_list[4])
         total = check1_arms + check1_legs + check2 + check3 + check4 + check5
         grading_details: list[GradingDetail] = [
             {"description": "雙手平舉", "grade": check1_arms},
