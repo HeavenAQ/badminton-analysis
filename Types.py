@@ -1,6 +1,8 @@
 from enum import IntEnum
 from typing import Dict, List, Tuple, TypedDict
 
+from numpy.typing import NDArray
+
 
 class COCOKeypoints(IntEnum):
     NOSE = 0
@@ -46,12 +48,24 @@ class Handedness(IntEnum):
         return self.name.lower()
 
 
+# Body Coordinate System
+class BodyCoordinateSystem(TypedDict):
+    origin: NDArray
+    x_axis: NDArray
+    y_axis: NDArray
+
+
+# body coordinates and angles
 Coordinate = Tuple[float, float]
-CoordinateList = List[Coordinate]
-BodyCoordinateDict = Dict[COCOKeypoints, Coordinate]
+Coordinates = List[Coordinate]
+CoordinateDict = Dict[COCOKeypoints, Coordinate]
+CoordinatesDict = Dict[COCOKeypoints, Coordinates]
+AngleDict = Dict[str, float] | None
+AngleDicts = List[AngleDict]
 
 
-# Response related types
+# Types reated to Graders
+GraderInput = AngleDicts | CoordinatesDict
 
 
 class GradingDetail(TypedDict):
@@ -59,12 +73,12 @@ class GradingDetail(TypedDict):
     grade: float
 
 
-class GradingOutcome(TypedDict):
+class GraderResult(TypedDict):
     total_grade: float
     grading_details: list[GradingDetail]
 
 
 class VideoAnalysisResponse(TypedDict):
-    grade: GradingOutcome
+    grade: GraderResult
     used_angles_data: list[dict[str, float] | None]
     processed_video: str

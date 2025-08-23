@@ -7,7 +7,7 @@ from Grader import (
     AngleDict,
     serve_angle_grader,
 )
-from Types import Skill, Handedness, GradingOutcome
+from Types import Skill, Handedness, GraderResult
 
 
 class TestServeAngleGrader:
@@ -47,7 +47,7 @@ class TestServeAngleGrader:
 class TestGraderRegistry:
     def test_register_and_get_grader(self):
         class TestGrader(Grader):
-            def grade(self, angles) -> GradingOutcome:
+            def grade(self, angles) -> GraderResult:
                 return {"total_grade": 100, "grading_details": []}
 
         GraderRegistry.register(Skill.SERVE, Handedness.RIGHT, TestGrader)

@@ -1,11 +1,20 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, Type
+from typing import Dict, Tuple, Type, cast
 import pandas as pd
-from Types import GradingDetail, GradingOutcome, Handedness, Skill
+from Logger import Logger
+from Types import (
+    AngleDicts,
+    COCOKeypoints,
+    Coordinate,
+    CoordinatesDict,
+    GraderInput,
+    GradingDetail,
+    GraderResult,
+    Handedness,
+    AngleDict,
+    Skill,
+)
 
-# Types
-AngleDict = dict[str, float] | None
-AngleDicts = list[AngleDict]
 
 # Expert data
 serve_mean = pd.read_excel(
@@ -15,6 +24,12 @@ serve_std = pd.read_excel(
     "./stats/serve/expert angle stats.xlsx", sheet_name="std"
 ).set_index("Unnamed: 0")
 
+# Error Response
+EMPTY_GRADER_RESULT: GraderResult = {
+    "grading_details": [],
+    "total_grade": 0,
+}
+
 
 def serve_angle_grader(
     angle_max_grade: float,
@@ -22,10 +37,14 @@ def serve_angle_grader(
     frame_idx: str,
     angle_dict: dict[str, float],
 ) -> float:
+    logger = Logger("serve_angle_grader")
+    logger.debug(f"Grading angle for joint: {joint_name}, frame: {frame_idx}")
+    
     # Use joint name and frame index to get the mean and std from the expert data
     idx = joint_name, frame_idx
     mean = serve_mean.loc[idx]
     std = serve_std.loc[idx]
+    logger.debug(f"Expert data - mean: {mean}, std: {std}")
 
     # Calculate the min and max angle based on the mean and std
     min_angle = mean - std
@@ -33,14 +52,20 @@ def serve_angle_grader(
 
     # get current angle
     current_angle = angle_dict[joint_name]
+    logger.debug(f"Current angle: {current_angle}, range: [{min_angle}, {max_angle}]")
 
     if min_angle <= current_angle <= max_angle:
+        logger.info(f"Angle within range, full score: {angle_max_grade}")
         return angle_max_grade
     else:
         if min_angle > current_angle:
-            return angle_max_grade * (current_angle / min_angle)
+            score = angle_max_grade * (current_angle / min_angle)
+            logger.warning(f"Angle below range, reduced score: {score}")
+            return score
         else:
-            return angle_max_grade * (max_angle / current_angle)
+            score = angle_max_grade * (max_angle / current_angle)
+            logger.warning(f"Angle above range, reduced score: {score}")
+            return score
 
 
 class Grader(ABC):
@@ -50,9 +75,10 @@ class Grader(ABC):
 
     def __init__(self, handedness: Handedness):
         self.handedness = handedness
+        self.logger = Logger(self.__class__.__name__)
 
     @abstractmethod
-    def grade(self, angles: AngleDicts) -> GradingOutcome:
+    def grade(self, grader_input: GraderInput) -> GraderResult:
         """
         Abstract method to grade the performance based on angles.
 
@@ -78,6 +104,8 @@ class GraderRegistry:
             handedness (str): Handedness (e.g., 'left', 'right').
             grader_class (type): The grader class to register.
         """
+        logger = Logger("GraderRegistry")
+        logger.info(f"Registering grader for skill: {skill}, handedness: {handedness}")
         cls._registry[(skill, handedness)] = grader_class
 
     @classmethod
@@ -92,12 +120,101 @@ class GraderRegistry:
         Returns:
             Grader: An instance of the appropriate grader.
         """
+        logger = Logger("GraderRegistry")
+        logger.debug(f"Getting grader for skill: {skill}, handedness: {handedness}")
+        
         grader_class = cls._registry.get((skill, handedness))
         if not grader_class:
+            logger.error(f"No grader registered for skill={skill}, handedness={handedness}")
             raise ValueError(
                 f"No grader registered for skill={skill}, handedness={handedness}"
             )
+        
+        logger.info(f"Retrieved grader: {grader_class.__name__}")
         return grader_class(handedness)
+
+
+class FootworkGrader(Grader):
+    ORIGIN_TOLERANCE_RATE = 0.35
+    ORIGIN_FRAME = 5
+
+    def __init__(self, handedness: Handedness):
+        super().__init__(handedness)
+        self.dominant_foot, self.non_dominant_foot = self.feet
+
+    @property
+    def feet(
+        self,
+    ) -> Tuple[
+        COCOKeypoints,
+        COCOKeypoints,
+    ]:
+        keypoint_map = {
+            Handedness.RIGHT: (COCOKeypoints.RIGHT_ANKLE, COCOKeypoints.LEFT_ANKLE),
+            Handedness.LEFT: (COCOKeypoints.LEFT_ANKLE, COCOKeypoints.RIGHT_ANKLE),
+        }
+        return keypoint_map[self.handedness]
+
+    def __calc_distance(self, a: Coordinate, b: Coordinate):
+        x = a[0] - b[0]
+        y = a[1] - b[1]
+        return (x**2 + y**2) ** 0.5
+
+    def __calc_center(self, a: Coordinate, b: Coordinate):
+        return (
+            (a[0] + b[0]) / 2,
+            (a[1] + b[1]) / 2,
+        )
+
+    def __get_origin_range(
+        self, dom_foot_coord: Coordinate, non_dominant_foot: Coordinate
+    ) -> Tuple[Coordinate, float]:
+        """
+        Compute the origin of the player's standing position and calculate the tolerable range
+
+        Args:
+            dom_foot_coord: The coordinate of the dominant foot
+            non_dom_foot_coord: The coordinate of the non-dominant foot
+
+        Returns:
+            center: the coordinate of the standing position of the player
+            tolerance: the tolerable range for the player to move back
+        """
+        stance_width = self.__calc_distance(dom_foot_coord, non_dominant_foot)
+        tolerance = stance_width * FootworkGrader.ORIGIN_TOLERANCE_RATE
+        center = self.__calc_center(dom_foot_coord, non_dominant_foot)
+        return center, tolerance
+
+    def __within_origin(
+        self,
+        origin: Coordinate,
+        tolerance: float,
+        dom_foot_coord: Coordinate,
+        non_dom_foot_coord: Coordinate,
+    ):
+        center = self.__calc_center(dom_foot_coord, non_dom_foot_coord)
+        dom_within = abs(center[0] - origin[0]) <= tolerance
+        non_dom_within = abs(center[1] - origin[1]) <= tolerance
+        return dom_within and non_dom_within
+
+    def grade(self, grader_input: GraderInput) -> GraderResult:
+        self.logger.debug("Starting footwork grading")
+        if not grader_input or not isinstance(grader_input, dict):
+            self.logger.warning("Invalid grader input for footwork analysis")
+            return EMPTY_GRADER_RESULT
+        
+        body_coordinates = cast(CoordinatesDict, grader_input)
+        self.logger.info(f"Analyzing footwork for {self.handedness} handed player")
+
+        # Get the coordinates of feet
+        dom_foot_coords = body_coordinates[self.dominant_foot]
+        non_dom_foot_coords = body_coordinates[self.non_dominant_foot]
+        origin, tolerance = self.__get_origin_range(
+            dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+            non_dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+        )
+        self.logger.debug(f"Origin calculated: {origin}, tolerance: {tolerance}")
+        pass
 
 
 class ServeGrader(Grader):
@@ -205,21 +322,34 @@ class ServeGrader(Grader):
 
         # full score for this frame: 20
 
-    def grade(self, angles: AngleDicts) -> GradingOutcome:
-        if len(angles) < 5:
-            return {
-                "grading_details": [],
-                "total_grade": 0,
-            }
+    def grade(self, grader_input: GraderInput) -> GraderResult:
+        self.logger.debug("Starting serve grading")
+        if not isinstance(grader_input, list) or len(grader_input) < 5:
+            self.logger.error(f"Invalid grader input: expected list with 5 elements, got {type(grader_input)} with length {len(grader_input) if isinstance(grader_input, list) else 'N/A'}")
+            return EMPTY_GRADER_RESULT
 
+        self.logger.info(f"Grading serve for {self.handedness} handed player")
+        
         # full score for this: 100
-        check1_arms = self.grade_checkpoint_1_arms(angles[0])
-        check1_legs = self.grade_checkpoint_1_legs(angles[0])
-        check2 = self.grade_checkpoint_2(angles[0], angles[1])
-        check3 = self.grade_checkpoint_3(angles[2])
-        check4 = self.grade_checkpoint_4(angles[3])
-        check5 = self.grade_checkpoint_5(angles[4])
+        angle_list = cast(AngleDicts, grader_input)
+        
+        self.logger.debug("Evaluating checkpoint 1 - arms position")
+        check1_arms = self.grade_checkpoint_1_arms(angle_list[0])
+        self.logger.debug("Evaluating checkpoint 1 - leg position")
+        check1_legs = self.grade_checkpoint_1_legs(angle_list[0])
+        self.logger.debug("Evaluating checkpoint 2 - weight transfer")
+        check2 = self.grade_checkpoint_2(angle_list[0], angle_list[1])
+        self.logger.debug("Evaluating checkpoint 3 - hip rotation")
+        check3 = self.grade_checkpoint_3(angle_list[2])
+        self.logger.debug("Evaluating checkpoint 4 - wrist flick")
+        check4 = self.grade_checkpoint_4(angle_list[3])
+        self.logger.debug("Evaluating checkpoint 5 - shoulder rotation")
+        check5 = self.grade_checkpoint_5(angle_list[4])
+        
         total = check1_arms + check1_legs + check2 + check3 + check4 + check5
+        self.logger.info(f"Serve grading completed. Total score: {total}/100")
+        self.logger.debug(f"Individual scores - Arms: {check1_arms}, Legs: {check1_legs}, Transfer: {check2}, Hip: {check3}, Wrist: {check4}, Shoulder: {check5}")
+        
         grading_details: list[GradingDetail] = [
             {"description": "雙手平舉", "grade": check1_arms},
             {"description": "將重心放至持拍腳", "grade": check1_legs},

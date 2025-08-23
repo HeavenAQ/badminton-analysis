@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from ultralytics import YOLO
 
 from Logger import Logger
-from Types import BodyCoordinateDict, COCOKeypoints
+from Types import BodyCoordinateSystem, CoordinateDict, COCOKeypoints
 from PIL import Image, ImageDraw, ImageFont
 from Joints import SKELETON_CONNECTIONS
 
@@ -90,7 +90,7 @@ class PoseDetector:
         self.logger.debug("Pose estimation completed")
         return results
 
-    def get_2d_landmarks(self, results: Any) -> Optional[BodyCoordinateDict]:
+    def get_2d_landmarks(self, results: Any) -> Optional[CoordinateDict]:
         """
         Retrieves the pose landmarks as a dictionary with body part numbers as keys
         with their corresponding x, y coordinates being the value.
@@ -99,7 +99,7 @@ class PoseDetector:
             img (MatLike): The input image from which landmarks are to be extracted.
 
         Returns:
-            Optional[Body2DCoordinates]: A dictionary containing the landmark index
+            Optional[CoordinateDict]: A dictionary containing the landmark index
                                         and its corresponding x, y coordinates
                                         or None if no landmarks are detected.
         """
@@ -166,7 +166,7 @@ class PoseDetector:
         angle_radian = np.arccos(cos_theta)
         return np.rad2deg(angle_radian)
 
-    def show_pose(self, img: MatLike, landmarks: Optional[BodyCoordinateDict]) -> None:
+    def show_pose(self, img: MatLike, landmarks: Optional[CoordinateDict]) -> None:
         """
         Draws only the pose skeleton (landmarks and connections) on the given image.
 

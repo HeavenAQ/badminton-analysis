@@ -32,8 +32,10 @@ class TestLogger:
         mock_log_method = MagicMock()
         decorated_method = log_with_frame_info(mock_log_method)
         
-        decorated_method("test message")
+        # Create a mock self object
+        mock_self = MagicMock()
+        decorated_method(mock_self, "test message")
         
         mock_log_method.assert_called_once()
-        call_args = mock_log_method.call_args[0][0]
+        call_args = mock_log_method.call_args[0][1]  # Second argument is the message
         assert "test message" in call_args

@@ -7,7 +7,7 @@ from typing import Callable
 def log_with_frame_info(log_method: Callable):
     # wraps decorator ensures the inspect functions pointing to the callback function
     @wraps(log_method)
-    def wrapper(message: str):
+    def wrapper(self, message: str):
         frame = inspect.currentframe()
         try:
             # refer to the caller
@@ -16,9 +16,9 @@ def log_with_frame_info(log_method: Callable):
                 enhanced_message = (
                     f"{message} - {caller.f_code.co_filename}:{caller.f_lineno}"
                 )
-                return log_method(enhanced_message)
+                return log_method(self, enhanced_message)
             else:
-                return log_method(message)
+                return log_method(self, message)
         finally:
             del frame
 
