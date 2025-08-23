@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from queue import Queue
 from Grader import GraderRegistry
+from Logger import Logger
 from Normalizer import BodyCentricNormalizer
 from PoseModule import PoseDetector
 from Joints import JOINTS
@@ -33,6 +34,7 @@ class VideoProcessor:
         self.video_path = video_path
         self.out_filename = out_filename
         self.output_folder = output_folder
+        self.logger = Logger(self.__class__.__name__)
         self.pose_detector = PoseDetector()
         self.normalizer = BodyCentricNormalizer()
         self.hand_positions: Coordinates = []
@@ -77,8 +79,10 @@ class VideoProcessor:
             - used_angles_data: list[dict[str, float] | None]
             - processed_video: str
         """
+        self.logger.info(f"Starting video frame processing for {skill} with {handedness} handedness")
         cap = cv2.VideoCapture(self.video_path)
         org_fps = cap.get(cv2.CAP_PROP_FPS)
+        self.logger.debug(f"Video opened: {self.video_path}, FPS: {org_fps}")
 
         # Frame capture with threading
         frame_queue = Queue()
@@ -102,11 +106,13 @@ class VideoProcessor:
         capture_thread = threading.Thread(target=frame_capture, daemon=True)
         capture_thread.start()
 
+        frame_count = 0
         while True:
             if not frame_queue.empty():
                 frame = frame_queue.get()
                 time_interval = timestamp_queue.get()
                 self.time_intervals.append(time_interval)
+                frame_count += 1
 
                 # Pose estimation
                 results = self.pose_detector.get_pose(frame)
@@ -132,14 +138,23 @@ class VideoProcessor:
                         self.frames.append(frame.copy())
                     if elbow:
                         self.elbow_positions.append(elbow)
+                    
+                    if frame_count % 30 == 0:  # Log every 30 frames
+                        self.logger.debug(f"Processed {frame_count} frames, detected {len(self.hand_positions)} hand positions")
+                else:
+                    self.logger.warning(f"No landmarks detected in frame {frame_count}")
             else:
                 if not capture_thread.is_alive():
                     break
+        
+        self.logger.info(f"Frame processing completed. Total frames: {frame_count}, Hand positions: {len(self.hand_positions)}")
 
         cap.release()
         return self.process_metrics(org_fps, skill, handedness)
 
     def __derivative(self, positions: np.ndarray) -> np.ndarray:
+        if len(self.time_intervals) < 2:
+            return np.array([])
         return np.diff(positions, axis=0) / self.time_intervals[1:]
 
     def calculate_velocity(self, positions: Coordinates) -> np.ndarray:
@@ -147,6 +162,8 @@ class VideoProcessor:
             np.diff(positions, axis=0),
             axis=1,
         )
+        if len(self.time_intervals) < 2:
+            return np.array([])
         return displacement / self.time_intervals[1:]
 
     def calculate_acceleration(self, velocities: np.ndarray) -> np.ndarray:
@@ -159,6 +176,8 @@ class VideoProcessor:
         Returns:
             A tuple containing (start_index, peak_frame_index, end_index).
         """
+        self.logger.debug("Finding analysis window using kinematic analysis")
+        
         # 1. Calculate kinematics to find the initial peak acceleration
         smoothed_positions = self.moving_average(
             self.hand_positions,
@@ -166,6 +185,7 @@ class VideoProcessor:
         )
         velocities = self.calculate_velocity(smoothed_positions)
         accelerations = self.calculate_acceleration(velocities)
+        self.logger.debug(f"Calculated kinematics: positions={len(smoothed_positions)}, velocities={len(velocities)}, accelerations={len(accelerations)}")
 
         # The offset accounts for the frames lost during velocity/acceleration calculation
         initial_peak_acc_index = np.argmax(accelerations) + PEAK_ACCELERATION_OFFSET
@@ -199,7 +219,8 @@ class VideoProcessor:
         # 4. Define the final clip range with padding
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
         final_end_frame = min(len(self.frames), end_frame)
-
+        
+        self.logger.info(f"Analysis window determined: start={start_frame}, peak={peak_frame}, end={final_end_frame}")
         return int(start_frame), int(peak_frame), int(final_end_frame)
 
     def _calculate_grade(
@@ -216,6 +237,7 @@ class VideoProcessor:
         Returns:
             The grading dictionary from the grader.
         """
+        self.logger.debug("Starting grade calculation")
         start, peak, end = window
 
         # Define the 5 key frames for angle calculation
@@ -226,12 +248,16 @@ class VideoProcessor:
             (peak + end) // 2,
             end,
         )
+        self.logger.debug(f"Key frame indices: {key_frames_indices}")
 
         angle_lists = [self.compute_angles(self.frames[i]) for i in key_frames_indices]
+        self.logger.debug(f"Computed angles for {len([a for a in angle_lists if a is not None])} frames")
 
         # Dynamically get and use the grader
         grader = GraderRegistry.get(skill, handedness)
-        return grader.grade(angle_lists)
+        result = grader.grade(angle_lists)
+        self.logger.info(f"Grade calculation completed with total score: {result['total_grade']}")
+        return result
 
     def _create_video_clip_base64(
         self, start_frame: int, end_frame: int, org_fps: float
@@ -264,8 +290,11 @@ class VideoProcessor:
         Orchestrates the video analysis process: finds key frames, grades the motion,
         and generates a processed video clip.
         """
+        self.logger.info("Starting video metrics processing")
+        
         # Use a "guard clause" for cleaner code and to handle edge cases first
         if len(self.hand_positions) <= 2:
+            self.logger.warning(f"Insufficient hand positions detected: {len(self.hand_positions)}. Cannot perform analysis.")
             return {
                 "grade": {"total_grade": 0, "grading_details": []},
                 "used_angles_data": [],
@@ -283,6 +312,7 @@ class VideoProcessor:
         video_base64 = self._create_video_clip_base64(start_index, end_index, org_fps)
 
         # 4. Assemble and return the final response
+        self.logger.info("Video analysis completed successfully")
         return {
             "grade": grade,
             "used_angles_data": [],  # This can be populated if needed
@@ -293,6 +323,7 @@ class VideoProcessor:
         self, start_index: int, end_index: int, org_fps: float
     ) -> str:
         """Save a video segment with arc and pose skeleton overlay."""
+        self.logger.info(f"Saving video segment from frame {start_index} to {end_index}")
         output_video_path = os.path.join(self.output_folder, "segment.mp4")
         frame_width = self.frames[0].shape[1]
         frame_height = self.frames[0].shape[0]
@@ -300,6 +331,7 @@ class VideoProcessor:
         out = cv2.VideoWriter(
             output_video_path, fourcc, org_fps, (frame_width, frame_height)
         )
+        self.logger.debug(f"Video writer initialized: {frame_width}x{frame_height} @ {org_fps} FPS")
 
         for i in range(start_index, end_index + 1):
             frame = self.frames[i].copy()
@@ -333,6 +365,7 @@ class VideoProcessor:
             out.write(frame)
 
         out.release()
+        self.logger.info(f"Video segment saved successfully: {output_video_path}")
         print(f"Segment video saved as '{output_video_path}'")
         return output_video_path
 
@@ -340,9 +373,12 @@ class VideoProcessor:
         results = self.pose_detector.get_pose(frame)
         landmarks = self.pose_detector.get_2d_landmarks(results)
         if not landmarks:
+            self.logger.warning("No landmarks detected for angle computation")
             return None
 
         angles: dict[str, float] = {key: 0.0 for key in JOINTS.keys()}
+        successful_calculations = 0
+        
         for joint_name, (point_a_id, point_b_id, point_c_id) in JOINTS.items():
             if all(kp in landmarks for kp in (point_a_id, point_b_id, point_c_id)):
                 point_a = landmarks[point_a_id]
@@ -352,23 +388,22 @@ class VideoProcessor:
                 angle = self.pose_detector.compute_angle(point_a, point_b, point_c)
                 if angle is not None and isinstance(angle, float):
                     angles[joint_name] = angle
-                    self.pose_detector.logger.info(
-                        f"{joint_name} Angle: {angle:.2f} degrees"
-                    )
+                    successful_calculations += 1
+                    self.logger.debug(f"{joint_name} angle: {angle:.2f}°")
                 else:
-                    self.pose_detector.logger.error(
-                        f"Could not compute angle for {joint_name}"
-                    )
+                    self.logger.warning(f"Could not compute angle for {joint_name}")
             else:
-                self.pose_detector.logger.error(
-                    f"Keypoints for {joint_name} not detected"
-                )
+                self.logger.debug(f"Missing keypoints for {joint_name}")
+        
+        self.logger.debug(f"Successfully calculated {successful_calculations}/{len(JOINTS)} joint angles")
         return angles
 
     def process_video(
         self, skill: Skill, handedness: Handedness
     ) -> VideoAnalysisResponse:
         """Process the video."""
+        self.logger.info(f"Starting complete video processing for {skill} analysis")
         response = self.process_frames(skill, handedness)
+        self.logger.info("Video processing completed successfully")
         print("Video processing complete.")
         return response
