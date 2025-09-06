@@ -1,6 +1,7 @@
 from enum import IntEnum
-from typing import Dict, List, Tuple, TypedDict
+from typing import Any, Dict, List, Tuple, TypedDict
 
+from numpy import floating
 from numpy.typing import NDArray
 
 
@@ -56,7 +57,7 @@ class BodyCoordinateSystem(TypedDict):
 
 
 # body coordinates and angles
-Coordinate = Tuple[float, float]
+Coordinate = Tuple[floating[Any], floating[Any]]
 Coordinates = List[Coordinate]
 CoordinateDict = Dict[COCOKeypoints, Coordinate]
 CoordinatesDict = Dict[COCOKeypoints, Coordinates]

@@ -122,7 +122,7 @@ class TestBodyCentricNormalizer:
             COCOKeypoints.LEFT_ELBOW: (5, 5),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__normalize_by_shoulder_width(
+        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
             landmarks
         )
 
@@ -138,7 +138,7 @@ class TestBodyCentricNormalizer:
             COCOKeypoints.RIGHT_ELBOW: (15, 5),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__normalize_by_shoulder_width(
+        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
             landmarks
         )
 
@@ -151,7 +151,7 @@ class TestBodyCentricNormalizer:
             COCOKeypoints.LEFT_ELBOW: (5, 5),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__normalize_by_shoulder_width(
+        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
             landmarks
         )
 

@@ -1,24 +1,24 @@
 import logging
 import inspect
 from functools import wraps
-from typing import Callable
+from typing import Any, Callable
+
+T = Callable[[Any, str], None]
 
 
-def log_with_frame_info(log_method: Callable):
-    # wraps decorator ensures the inspect functions pointing to the callback function
+def log_with_frame_info(log_method: T) -> T:
     @wraps(log_method)
-    def wrapper(self, message: str):
+    def wrapper(self, message: str) -> None:
         frame = inspect.currentframe()
         try:
-            # refer to the caller
             if frame and frame.f_back:
                 caller = frame.f_back
                 enhanced_message = (
                     f"{message} - {caller.f_code.co_filename}:{caller.f_lineno}"
                 )
-                return log_method(self, enhanced_message)
+                log_method(self, enhanced_message)  # Don't return the result
             else:
-                return log_method(self, message)
+                log_method(self, message)
         finally:
             del frame
 

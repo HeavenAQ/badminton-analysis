@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, Type, cast
+from typing import Any, Dict, Tuple, Type, cast
+from numpy import floating
 import pandas as pd
 from Logger import Logger
 from Types import (
@@ -39,7 +40,7 @@ def serve_angle_grader(
 ) -> float:
     logger = Logger("serve_angle_grader")
     logger.debug(f"Grading angle for joint: {joint_name}, frame: {frame_idx}")
-    
+
     # Use joint name and frame index to get the mean and std from the expert data
     idx = joint_name, frame_idx
     mean = serve_mean.loc[idx]
@@ -122,14 +123,16 @@ class GraderRegistry:
         """
         logger = Logger("GraderRegistry")
         logger.debug(f"Getting grader for skill: {skill}, handedness: {handedness}")
-        
+
         grader_class = cls._registry.get((skill, handedness))
         if not grader_class:
-            logger.error(f"No grader registered for skill={skill}, handedness={handedness}")
+            logger.error(
+                f"No grader registered for skill={skill}, handedness={handedness}"
+            )
             raise ValueError(
                 f"No grader registered for skill={skill}, handedness={handedness}"
             )
-        
+
         logger.info(f"Retrieved grader: {grader_class.__name__}")
         return grader_class(handedness)
 
@@ -168,7 +171,7 @@ class FootworkGrader(Grader):
 
     def __get_origin_range(
         self, dom_foot_coord: Coordinate, non_dominant_foot: Coordinate
-    ) -> Tuple[Coordinate, float]:
+    ) -> Tuple[Coordinate, floating[Any]]:
         """
         Compute the origin of the player's standing position and calculate the tolerable range
 
@@ -197,24 +200,31 @@ class FootworkGrader(Grader):
         non_dom_within = abs(center[1] - origin[1]) <= tolerance
         return dom_within and non_dom_within
 
-    def grade(self, grader_input: GraderInput) -> GraderResult:
-        self.logger.debug("Starting footwork grading")
-        if not grader_input or not isinstance(grader_input, dict):
-            self.logger.warning("Invalid grader input for footwork analysis")
-            return EMPTY_GRADER_RESULT
-        
-        body_coordinates = cast(CoordinatesDict, grader_input)
-        self.logger.info(f"Analyzing footwork for {self.handedness} handed player")
-
-        # Get the coordinates of feet
-        dom_foot_coords = body_coordinates[self.dominant_foot]
-        non_dom_foot_coords = body_coordinates[self.non_dominant_foot]
-        origin, tolerance = self.__get_origin_range(
-            dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
-            non_dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
-        )
-        self.logger.debug(f"Origin calculated: {origin}, tolerance: {tolerance}")
-        pass
+    # def checkpoint_1(self, dom_foot_coord: Coordinate, non_dom_foot_coord: Coordinate):
+    #     pass
+    #
+    #
+    # def grade(self, grader_input: GraderInput) -> GraderResult:
+    #     self.logger.debug("Starting footwork grading")
+    #     if not grader_input or not isinstance(grader_input, dict):
+    #         self.logger.warning("Invalid grader input for footwork analysis")
+    #         return EMPTY_GRADER_RESULT
+    #
+    #     body_coordinates = cast(CoordinatesDict, grader_input)
+    #     self.logger.info(f"Analyzing footwork for {self.handedness} handed player")
+    #
+    #     # Get the coordinates of feet
+    #     dom_foot_coords = body_coordinates[self.dominant_foot]
+    #     non_dom_foot_coords = body_coordinates[self.non_dominant_foot]
+    #     origin, tolerance = self.__get_origin_range(
+    #         dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+    #         non_dom_foot_coords[FootworkGrader.ORIGIN_FRAME],
+    #     )
+    #     self.logger.debug(f"Origin calculated: {origin}, tolerance: {tolerance}")
+    #
+    #     # Start checking movements
+    #
+    #     pass
 
 
 class ServeGrader(Grader):
@@ -325,14 +335,16 @@ class ServeGrader(Grader):
     def grade(self, grader_input: GraderInput) -> GraderResult:
         self.logger.debug("Starting serve grading")
         if not isinstance(grader_input, list) or len(grader_input) < 5:
-            self.logger.error(f"Invalid grader input: expected list with 5 elements, got {type(grader_input)} with length {len(grader_input) if isinstance(grader_input, list) else 'N/A'}")
+            self.logger.error(
+                f"Invalid grader input: expected list with 5 elements, got {type(grader_input)} with length {len(grader_input) if isinstance(grader_input, list) else 'N/A'}"
+            )
             return EMPTY_GRADER_RESULT
 
         self.logger.info(f"Grading serve for {self.handedness} handed player")
-        
+
         # full score for this: 100
         angle_list = cast(AngleDicts, grader_input)
-        
+
         self.logger.debug("Evaluating checkpoint 1 - arms position")
         check1_arms = self.grade_checkpoint_1_arms(angle_list[0])
         self.logger.debug("Evaluating checkpoint 1 - leg position")
@@ -345,11 +357,13 @@ class ServeGrader(Grader):
         check4 = self.grade_checkpoint_4(angle_list[3])
         self.logger.debug("Evaluating checkpoint 5 - shoulder rotation")
         check5 = self.grade_checkpoint_5(angle_list[4])
-        
+
         total = check1_arms + check1_legs + check2 + check3 + check4 + check5
         self.logger.info(f"Serve grading completed. Total score: {total}/100")
-        self.logger.debug(f"Individual scores - Arms: {check1_arms}, Legs: {check1_legs}, Transfer: {check2}, Hip: {check3}, Wrist: {check4}, Shoulder: {check5}")
-        
+        self.logger.debug(
+            f"Individual scores - Arms: {check1_arms}, Legs: {check1_legs}, Transfer: {check2}, Hip: {check3}, Wrist: {check4}, Shoulder: {check5}"
+        )
+
         grading_details: list[GradingDetail] = [
             {"description": "雙手平舉", "grade": check1_arms},
             {"description": "將重心放至持拍腳", "grade": check1_legs},
