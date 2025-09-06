@@ -6,7 +6,7 @@ from typing import Literal, Optional, Tuple
 import cv2
 import numpy as np
 from queue import Queue
-from Grader import GraderRegistry
+from GraderRegistry import GraderRegistry
 from Logger import Logger
 from Normalizer import BodyCentricNormalizer
 from PoseModule import PoseDetector

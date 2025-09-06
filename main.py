@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Main script for badminton pose analysis with skeleton and angle visualization.
 Allows users to input video files and see real-time visualization of pose detection,
@@ -34,14 +33,17 @@ class VideoAnalyzer:
         video_path: str,
         skill: Optional[Skill] = None,
         handedness: Optional[Handedness] = None,
+        output_path: Optional[str] = None,
     ) -> None:
         """
-        Process video with live visualization of skeleton and angles.
+        Process video with live visualization of skeleton and angles,
+        and optionally save the processed video.
 
         Args:
             video_path: Path to the input video file
             skill: Optional skill type for analysis (not used in visualization)
             handedness: Optional handedness for analysis (not used in visualization)
+            output_path: Path to save the analyzed video (optional)
         """
         if not os.path.exists(video_path):
             self.logger.error(f"Video file not found: {video_path}")
@@ -64,11 +66,15 @@ class VideoAnalyzer:
             f"Video properties: {width}x{height}, {fps:.2f} FPS, {total_frames} frames"
         )
 
+        # Setup VideoWriter if output path is provided
+        writer = None
+        if output_path:
+            fourcc = cv2.VideoWriter.fourcc(*"mp4v")  # or 'XVID' for .avi
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            self.logger.info(f"Saving analyzed video to: {output_path}")
+
         frame_count = 0
-
-        # Create window with proper sizing
         cv2.namedWindow("Badminton Analysis - Press SPACE to pause, Q to quit")
-
         paused = False
 
         while cap.isOpened():
@@ -79,9 +85,11 @@ class VideoAnalyzer:
                     break
 
                 frame_count += 1
-
-                # Process the frame
                 processed_frame = self.process_frame(frame, frame_count, total_frames)
+
+                # Write frame to output video
+                if writer:
+                    writer.write(processed_frame)
 
                 # Display the frame
                 cv2.imshow(
@@ -89,16 +97,17 @@ class VideoAnalyzer:
                     processed_frame,
                 )
 
-            # Handle key presses
             key = cv2.waitKey(int(1000 / fps)) & 0xFF
-            if key == ord("q") or key == 27:  # Q or ESC to quit
+            if key == ord("q") or key == 27:
                 break
-            elif key == ord(" "):  # SPACE to pause/resume
+            elif key == ord(" "):
                 paused = not paused
                 status = "PAUSED" if paused else "PLAYING"
                 self.logger.info(f"Video {status}")
 
         cap.release()
+        if writer:
+            writer.release()
         cv2.destroyAllWindows()
         self.logger.info("Video analysis completed")
 
@@ -234,6 +243,11 @@ def main():
         help="Handedness for analysis (optional, for future use)",
     )
 
+    parser.add_argument(
+        "--output",
+        help="Path to save the analyzed video (optional, e.g. output.mp4)",
+    )
+
     args = parser.parse_args()
 
     # Validate video file exists
@@ -271,7 +285,7 @@ def main():
     print("")
 
     try:
-        analyzer.process_video_live(args.video_path, skill, handedness)
+        analyzer.process_video_live(args.video_path, skill, handedness, args.output)
         return 0
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user")
@@ -283,4 +297,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

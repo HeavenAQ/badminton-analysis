@@ -157,7 +157,7 @@ class TestVideoProcessor:
         assert isinstance(end, int)
         assert 0 <= start <= peak <= end <= num_frames
 
-    @patch("VideoProcessor.GraderRegistry.get")
+    @patch("GraderRegistry.GraderRegistry.get")
     def test_calculate_grade(self, mock_grader_get):
         mock_grader = MagicMock()
         mock_grader.grade.return_value = {"total_grade": 85, "grading_details": []}

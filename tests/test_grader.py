@@ -1,18 +1,15 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from Grader import (
-    Grader,
-    GraderRegistry,
-    ServeGrader,
-    AngleDict,
-    serve_angle_grader,
-)
+from Grader import Grader
+from ServeGrader import ServeGrader, serve_angle_grader
+from Types import AngleDict
+from GraderRegistry import GraderRegistry
 from Types import Skill, Handedness, GraderResult
 
 
 class TestServeAngleGrader:
-    @patch("Grader.serve_mean")
-    @patch("Grader.serve_std")
+    @patch("ServeGrader.serve_mean")
+    @patch("ServeGrader.serve_std")
     def test_serve_angle_grader_within_range(self, mock_std, mock_mean):
         mock_mean_loc = MagicMock()
         mock_mean_loc.__getitem__.return_value = 80  # Expected mean value
@@ -27,8 +24,8 @@ class TestServeAngleGrader:
 
         assert result == 10
 
-    @patch("Grader.serve_mean")
-    @patch("Grader.serve_std")
+    @patch("ServeGrader.serve_mean")
+    @patch("ServeGrader.serve_std")
     def test_serve_angle_grader_below_range(self, mock_std, mock_mean):
         mock_mean_loc = MagicMock()
         mock_mean_loc.__getitem__.return_value = 90  # Expected mean value
@@ -89,7 +86,7 @@ class TestServeRightHandedGrader:
         result = self.grader.grade_checkpoint_3(angle_dict)
         assert result == 20
 
-    @patch("Grader.serve_angle_grader")
+    @patch("ServeGrader.serve_angle_grader")
     def test_grade_checkpoint_4_calls_serve_angle_grader(self, mock_grader):
         mock_grader.return_value = 15
         angle_dict: AngleDict = {"Right Elbow": 120}
@@ -99,7 +96,7 @@ class TestServeRightHandedGrader:
         mock_grader.assert_called_once_with(20, "Right Elbow", "check4", angle_dict)
         assert result == 15
 
-    @patch("Grader.serve_angle_grader")
+    @patch("ServeGrader.serve_angle_grader")
     def test_grade_returns_grading_outcome(self, mock_grader):
         mock_grader.return_value = 10
 

@@ -28,6 +28,7 @@ class COCOKeypoints(IntEnum):
 class Skill(IntEnum):
     SERVE = 0
     CLEAR = 1
+    FOOTWORK = 2
 
     @classmethod
     def convert_to_enum(cls, skill: str):
