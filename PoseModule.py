@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from ultralytics import YOLO
 
 from Logger import Logger
-from Types import BodyCoordinateSystem, CoordinateDict, COCOKeypoints
+from Types import CoordinateDict, COCOKeypoints
 from PIL import Image, ImageDraw, ImageFont
 from Joints import SKELETON_CONNECTIONS
 
@@ -40,6 +40,7 @@ class PoseDetector:
         """
         self.logger = Logger(self.__class__.__name__)
         self.min_detection_confidence = min_detection_confidence
+        self.landmarks: CoordinateDict = {}
 
         # Initialize the YOLOv8 pose model
         self.model = YOLO(model_path)
@@ -187,7 +188,7 @@ class PoseDetector:
                     x1, y1 = landmarks[start]
                     x2, y2 = landmarks[end]
                     if (
-                        x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0
+                        x1 >= 0 and y1 >= 0 and x2 >= 0 and y2 >= 0
                     ):  # Ensure points are valid
                         cv2.line(
                             img,
@@ -198,8 +199,8 @@ class PoseDetector:
                         )
 
             # Draw each keypoint
-            for keypoint, (x, y) in landmarks.items():
-                if x > 0 and y > 0:  # Ensure point is valid
+            for _, (x, y) in landmarks.items():
+                if x >= 0 and y >= 0:  # Ensure point is valid
                     cv2.circle(img, (int(x), int(y)), 3, (249, 210, 60), 1)
         else:
             self.logger.error("No landmarks provided to show_pose method")

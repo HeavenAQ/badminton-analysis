@@ -97,14 +97,14 @@ class TestVideoProcessor:
     #         signal.alarm(0)  # Cancel timeout
 
     def test_compute_angles_no_landmarks(self):
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-
-        with patch.object(self.processor.pose_detector, "get_pose", return_value=None):
-            with patch.object(
-                self.processor.pose_detector, "get_2d_landmarks", return_value=None
-            ):
-                result = self.processor.compute_angles(frame)
-
+        # Test with empty normalized_landmarks
+        self.processor.normalized_landmarks = []
+        result = self.processor.compute_angles(0)
+        assert result is None
+        
+        # Test with frame index out of range
+        self.processor.normalized_landmarks = [{}]  # One empty landmark set
+        result = self.processor.compute_angles(1)  # Index 1 is out of range
         assert result is None
 
     @patch("VideoProcessor.cv2.VideoWriter")
@@ -117,7 +117,8 @@ class TestVideoProcessor:
         self.processor.frames = [
             np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(5)
         ]
-        self.processor.landmarks = [None for _ in range(5)]
+        self.processor.original_landmarks = [None for _ in range(5)]
+        self.processor.normalized_landmarks = [None for _ in range(5)]
 
         result = self.processor.save_video_segment(0, 4, 30.0)
 
