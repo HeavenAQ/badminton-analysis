@@ -23,7 +23,7 @@ from Logger import Logger
 class VideoAnalyzer:
     """Main class for analyzing videos with pose detection and angle visualization."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = Logger(self.__class__.__name__)
         self.pose_detector = PoseDetector()
         self.normalizer = BodyCentricNormalizer()
@@ -222,7 +222,7 @@ class VideoAnalyzer:
         )
 
 
-def main():
+def main() -> int:
     """Main function to run the video analyzer."""
     parser = argparse.ArgumentParser(
         description="Badminton Pose Analysis - Visualize skeleton and joint angles",

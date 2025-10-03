@@ -1,14 +1,18 @@
 import logging
 import inspect
 from functools import wraps
-from typing import Any, Callable
-
-T = Callable[[Any, str], None]
+from typing import Any, Callable, TypeVar, Protocol
 
 
-def log_with_frame_info(log_method: T) -> T:
+class _LogMethod(Protocol):
+    def __call__(self, __self: Any, __message: str) -> None: ...
+
+F = TypeVar("F", bound=_LogMethod)
+
+
+def log_with_frame_info(log_method: F) -> F:
     @wraps(log_method)
-    def wrapper(self, message: str) -> None:
+    def wrapper(self: Any, message: str) -> None:
         frame = inspect.currentframe()
         try:
             if frame and frame.f_back:
@@ -22,11 +26,11 @@ def log_with_frame_info(log_method: T) -> T:
         finally:
             del frame
 
-    return wrapper
+    return wrapper  # type: ignore[return-value]
 
 
 class Logger:
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(logging.DEBUG)  # Show debug too
         handler = logging.StreamHandler()
@@ -39,21 +43,21 @@ class Logger:
         self.logger.addHandler(handler)
 
     @log_with_frame_info
-    def debug(self, message: str):
-        return self.logger.debug(message)
+    def debug(self, message: str) -> None:
+        self.logger.debug(message)
 
     @log_with_frame_info
-    def info(self, message: str):
-        return self.logger.info(message)
+    def info(self, message: str) -> None:
+        self.logger.info(message)
 
     @log_with_frame_info
-    def warning(self, message: str):
-        return self.logger.warning(message)
+    def warning(self, message: str) -> None:
+        self.logger.warning(message)
 
     @log_with_frame_info
-    def error(self, message: str):
-        return self.logger.error(message)
+    def error(self, message: str) -> None:
+        self.logger.error(message)
 
     @log_with_frame_info
-    def critical(self, message: str):
-        return self.logger.critical(message)
+    def critical(self, message: str) -> None:
+        self.logger.critical(message)

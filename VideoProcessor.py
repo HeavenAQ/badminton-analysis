@@ -13,7 +13,8 @@ from PoseModule import PoseDetector
 from Joints import JOINTS
 from Types import (
     COCOKeypoints,
-    Coordinates,
+    Coordinate,
+    CoordinateDict,
     GraderResult,
     Handedness,
     Skill,
@@ -37,17 +38,19 @@ class VideoProcessor:
         self.logger = Logger(self.__class__.__name__)
         self.pose_detector = PoseDetector()
         self.normalizer = BodyCentricNormalizer()
-        self.hand_positions: Coordinates = []
-        self.elbow_positions: Coordinates = []
-        self.time_intervals = []
-        self.frames = []
-        self.original_landmarks = []  # Store original landmarks for visualization
-        self.normalized_landmarks = []  # Store normalized landmarks for analysis
+        self.hand_positions: list[Coordinate] = []
+        self.elbow_positions: list[Coordinate] = []
+        self.time_intervals: list[float] = []
+        self.frames: list[np.ndarray] = []
+        # Store original landmarks for visualization
+        self.original_landmarks: list[CoordinateDict | None] = []
+        # Store normalized landmarks for analysis
+        self.normalized_landmarks: list[CoordinateDict | None] = []
         self.output_path = os.path.join(self.output_folder, self.out_filename)
 
     def moving_average(
         self,
-        positions: np.ndarray | Coordinates,
+        positions: np.ndarray | list[Coordinate],
         window_size: int = 5,
         pad_mode: Literal["edge"] | Literal["reflect"] = "edge",
     ) -> np.ndarray:
@@ -93,10 +96,10 @@ class VideoProcessor:
         self.logger.debug(f"Video opened: {self.video_path}, FPS: {org_fps}")
 
         # Frame capture with threading
-        frame_queue = Queue()
-        timestamp_queue = Queue()
+        frame_queue: Queue[np.ndarray] = Queue()
+        timestamp_queue: Queue[float] = Queue()
 
-        def frame_capture():
+        def frame_capture() -> None:
             prev_time = time.perf_counter()
             while cap.isOpened():
                 success, frame = cap.read()
@@ -143,13 +146,13 @@ class VideoProcessor:
                         else COCOKeypoints.LEFT_ELBOW
                     )
                     # Use normalized landmarks for kinematic analysis
-                    wrist = normalized_landmarks.get(wrist)
-                    elbow = normalized_landmarks.get(elbow)
-                    if wrist:
-                        self.hand_positions.append(wrist)
+                    wrist_coord = normalized_landmarks.get(wrist)
+                    elbow_coord = normalized_landmarks.get(elbow)
+                    if wrist_coord is not None:
+                        self.hand_positions.append(np.asarray(wrist_coord, dtype=np.float64))
                         self.frames.append(frame.copy())
-                    if elbow:
-                        self.elbow_positions.append(elbow)
+                    if elbow_coord is not None:
+                        self.elbow_positions.append(np.asarray(elbow_coord, dtype=np.float64))
 
                     if frame_count % 30 == 0:  # Log every 30 frames
                         self.logger.debug(
@@ -173,7 +176,7 @@ class VideoProcessor:
             return np.array([])
         return np.diff(positions, axis=0) / self.time_intervals[1:]
 
-    def calculate_velocity(self, positions: np.ndarray | Coordinates) -> np.ndarray:
+    def calculate_velocity(self, positions: np.ndarray | list[Coordinate]) -> np.ndarray:
         pos = np.asarray(positions, dtype=np.float64)
         if pos.ndim != 2 or pos.shape[1] != 2:
             raise ValueError("positions must have shape (N, 2)")
@@ -183,7 +186,8 @@ class VideoProcessor:
         )
         if len(self.time_intervals) < 2:
             return np.array([])
-        return displacement / self.time_intervals[1:]
+        from typing import cast
+        return cast(np.ndarray, displacement / np.asarray(self.time_intervals[1:], dtype=np.float64))
 
     def calculate_acceleration(self, velocities: np.ndarray) -> np.ndarray:
         return self.__derivative(velocities)
@@ -209,7 +213,7 @@ class VideoProcessor:
         )
 
         # The offset accounts for the frames lost during velocity/acceleration calculation
-        initial_peak_acc_index = np.argmax(accelerations) + PEAK_ACCELERATION_OFFSET
+        initial_peak_acc_index = int(np.argmax(accelerations)) + PEAK_ACCELERATION_OFFSET
 
         # Find the starting and ending frames for analysis
         search_start = max(
@@ -220,14 +224,11 @@ class VideoProcessor:
             initial_peak_acc_index + IMPACT_FRAME_SEARCH_WINDOW_AFTER,
         )
 
-        sub_range_positions = self.hand_positions[search_start:search_end]
+        sub_range_positions = self.hand_positions[int(search_start):int(search_end)]
 
         peak_frame = initial_peak_acc_index
         # Convert to array for consistent ops
-        if isinstance(sub_range_positions, list):
-            arr = np.asarray(sub_range_positions, dtype=float)
-        else:
-            arr = np.asarray(sub_range_positions, dtype=float)
+        arr = np.asarray(sub_range_positions, dtype=np.float64)
         if arr.size > 0:
             # In image coordinates, a higher Y value means a lower position on the screen
             y_values = arr[:, 1]
@@ -236,11 +237,11 @@ class VideoProcessor:
 
         # Find the end of the motion using a custom elbow metric
         subset_elbow_pos = self.elbow_positions[peak_frame:]
-        arr_elbow = np.asarray(subset_elbow_pos, dtype=float)
+        arr_elbow = np.asarray(subset_elbow_pos, dtype=np.float64)
         # This metric (x-y) seems to identify a specific point in the follow-through
         composite_metric = arr_elbow[:, 0] - arr_elbow[:, 1] if arr_elbow.size > 0 else np.array([])
         relative_end_index = int(np.argmax(composite_metric)) if composite_metric.size > 0 else 0
-        end_frame = peak_frame + relative_end_index
+        end_frame = int(peak_frame) + int(relative_end_index)
 
         # Define the final clip range with padding
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
@@ -378,29 +379,28 @@ class VideoProcessor:
             # Use normalized landmarks for angle calculations
             normalized_landmarks = self.normalized_landmarks[i] if self.normalized_landmarks else None
 
-            if original_landmarks:
+            if original_landmarks is not None:
                 # Draw the pose skeleton using original coordinates
                 self.pose_detector.show_pose(frame, original_landmarks)
 
             # Overlay angle arcs using original landmarks for visualization
-            if original_landmarks and normalized_landmarks:
+            if original_landmarks is not None and normalized_landmarks is not None:
+                orig_lm = original_landmarks
+                norm_lm = normalized_landmarks
                 for key, (point_a_id, point_b_id, point_c_id) in JOINTS.items():
                     if key in ("Nose Right Shoulder Elbow", "Nose Left Shoulder Elbow"):
                         continue
                     # Check if points exist in both landmark sets
-                    if all(
-                        kp in original_landmarks and kp in normalized_landmarks 
-                        for kp in (point_a_id, point_b_id, point_c_id)
-                    ):
+                    if all(kp in orig_lm and kp in norm_lm for kp in (point_a_id, point_b_id, point_c_id)):
                         # Use original landmarks for visualization positions
-                        vis_point_a = original_landmarks[point_a_id]
-                        vis_point_b = original_landmarks[point_b_id]
-                        vis_point_c = original_landmarks[point_c_id]
+                        vis_point_a = orig_lm[point_a_id]
+                        vis_point_b = orig_lm[point_b_id]
+                        vis_point_c = orig_lm[point_c_id]
                         
                         # Use normalized landmarks for angle calculation
-                        calc_point_a = normalized_landmarks[point_a_id]
-                        calc_point_b = normalized_landmarks[point_b_id]
-                        calc_point_c = normalized_landmarks[point_c_id]
+                        calc_point_a = norm_lm[point_a_id]
+                        calc_point_b = norm_lm[point_b_id]
+                        calc_point_c = norm_lm[point_c_id]
 
                         # Compute angle using normalized coordinates
                         angle = self.pose_detector.compute_angle(
@@ -426,7 +426,8 @@ class VideoProcessor:
             self.logger.warning(f"No normalized landmarks available for frame {frame_index}")
             return None
 
-        landmarks = self.normalized_landmarks[frame_index]  # Use pre-computed normalized landmarks for analysis
+        from typing import cast
+        landmarks = cast(CoordinateDict, self.normalized_landmarks[frame_index])  # Use pre-computed normalized landmarks for analysis
 
         angles: dict[str, float] = {key: 0.0 for key in JOINTS.keys()}
         successful_calculations = 0

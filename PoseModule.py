@@ -46,8 +46,8 @@ class PoseDetector:
         self.model = YOLO(model_path)
 
         # FPS settings
-        self.__cur_time = 0
-        self.__prev_time = 0
+        self.__cur_time: float = 0.0
+        self.__prev_time: float = 0.0
 
         self.logger.info(
             f"PoseDetector initialized with model={model_path}, "
@@ -67,7 +67,7 @@ class PoseDetector:
         time_diff = self.__cur_time - self.__prev_time
         if time_diff == 0:
             time_diff = 1e-6  # Avoid division by zero
-        cur_fps = 1 / time_diff
+        cur_fps: float = 1.0 / time_diff
         self.__prev_time = self.__cur_time
         self.logger.debug(f"Current FPS calculated: {cur_fps}")
         return cur_fps
@@ -173,7 +173,7 @@ class PoseDetector:
 
         # Compute the angle in radians and convert it to degree
         angle_radian = np.arccos(cos_theta)
-        return np.rad2deg(angle_radian)
+        return float(np.rad2deg(angle_radian))
 
     def show_pose(self, img: MatLike, landmarks: Optional[CoordinateDict]) -> None:
         """
@@ -193,8 +193,10 @@ class PoseDetector:
             # Draw each connection in the skeleton
             for start, end in SKELETON_CONNECTIONS:
                 if start in landmarks and end in landmarks:
-                    x1, y1 = landmarks[start]
-                    x2, y2 = landmarks[end]
+                    c1 = landmarks[start]
+                    c2 = landmarks[end]
+                    x1, y1 = float(c1[0]), float(c1[1])
+                    x2, y2 = float(c2[0]), float(c2[1])
                     if (
                         x1 >= 0 and y1 >= 0 and x2 >= 0 and y2 >= 0
                     ):  # Ensure points are valid
@@ -207,7 +209,8 @@ class PoseDetector:
                         )
 
             # Draw each keypoint
-            for _, (x, y) in landmarks.items():
+            for _, coord in landmarks.items():
+                x, y = float(coord[0]), float(coord[1])
                 if x >= 0 and y >= 0:  # Ensure point is valid
                     cv2.circle(img, (int(x), int(y)), 3, (249, 210, 60), 1)
         else:
@@ -307,8 +310,8 @@ class PoseDetector:
 
     # Helper moethod that adds text to an image using Pillow (private method)
     def __add_text_with_pillow(
-        self, img, text, position, font_size=20, color=(255, 255, 255)
-    ):
+        self, img: np.ndarray, text: str, position: tuple[int, int], font_size: int = 20, color: tuple[int, int, int] = (255, 255, 255)
+    ) -> None:
         """
         Add text with Pillow onto an OpenCV image.
 

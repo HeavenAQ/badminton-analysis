@@ -31,8 +31,8 @@ def serve_angle_grader(
 
     # Use joint name and frame index to get the mean and std from the expert data
     idx = joint_name, frame_idx
-    mean = serve_mean.loc[idx]
-    std = serve_std.loc[idx]
+    mean = float(serve_mean.loc[idx])
+    std = float(serve_std.loc[idx])
     logger.debug(f"Expert data - mean: {mean}, std: {std}")
 
     # Calculate the min and max angle based on the mean and std
@@ -48,11 +48,11 @@ def serve_angle_grader(
         return angle_max_grade
     else:
         if min_angle > current_angle:
-            score = angle_max_grade * (current_angle / min_angle)
+            score = float(angle_max_grade) * (float(current_angle) / float(min_angle))
             logger.warning(f"Angle below range, reduced score: {score}")
             return score
         else:
-            score = angle_max_grade * (max_angle / current_angle)
+            score = float(angle_max_grade) * (float(max_angle) / float(current_angle))
             logger.warning(f"Angle above range, reduced score: {score}")
             return score
 
@@ -97,7 +97,7 @@ class ServeGrader(Grader):
         """
         if not angle_dict:
             return 0
-        grade = 0
+        grade: float = 0.0
         grade += serve_angle_grader(5, self.dominant_shoulder, "check1", angle_dict)
         grade += serve_angle_grader(5, self.non_dominant_shoulder, "check1", angle_dict)
         return grade
@@ -112,13 +112,13 @@ class ServeGrader(Grader):
             return 10
         return 0
 
-    def grade_checkpoint_2(self, angle_dict1: AngleDict, angle_dict2) -> float:
+    def grade_checkpoint_2(self, angle_dict1: AngleDict, angle_dict2: AngleDict) -> float:
         """
         Body weight transfer. Full score for this checkpoint: 20
         """
         if not angle_dict1 or not angle_dict2:
             return 0
-        grade = 0
+        grade: float = 0.0
         if angle_dict1[self.dominant_crotch] < angle_dict2[self.dominant_crotch]:
             grade += 10
         if (
@@ -132,7 +132,7 @@ class ServeGrader(Grader):
         """
         Bottom rotation. Full score for this checkpoint: 20
         """
-        grade = 0
+        grade: float = 0.0
         if not angle_dict:
             return grade
         if angle_dict[self.dominant_crotch] > angle_dict[self.non_dominant_crotch]:
@@ -143,7 +143,7 @@ class ServeGrader(Grader):
         """
         Wrist flick. Full score for this checkpoint: 20
         """
-        grade = 0
+        grade: float = 0.0
         if not angle_dict:
             return grade
         grade += serve_angle_grader(20, self.dominant_elbow, "check4", angle_dict)
@@ -153,7 +153,7 @@ class ServeGrader(Grader):
         """
         Shoulder rotation. Full score for this checkpoint: 20
         """
-        grade = 0
+        grade: float = 0.0
         if not angle:
             return grade
         grade += serve_angle_grader(10, self.dominant_shoulder, "check5", angle)
@@ -173,7 +173,7 @@ class ServeGrader(Grader):
         self.logger.info(f"Grading serve for {self.handedness} handed player")
 
         # full score for this: 100
-        angle_list = cast(AngleDicts, grader_input)
+        angle_list: list[AngleDict] = grader_input
 
         self.logger.debug("Evaluating checkpoint 1 - arms position")
         check1_arms = self.grade_checkpoint_1_arms(angle_list[0])

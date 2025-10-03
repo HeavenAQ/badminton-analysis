@@ -32,10 +32,10 @@ class Skill(IntEnum):
     FOOTWORK = 2
 
     @classmethod
-    def convert_to_enum(cls, skill: str):
+    def convert_to_enum(cls, skill: str) -> "Skill":
         return Skill[skill.upper()]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name.lower()
 
 
@@ -44,10 +44,10 @@ class Handedness(IntEnum):
     LEFT = 1
 
     @classmethod
-    def convert_to_enum(cls, handedness: str):
+    def convert_to_enum(cls, handedness: str) -> "Handedness":
         return Handedness[handedness.upper()]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name.lower()
 
 

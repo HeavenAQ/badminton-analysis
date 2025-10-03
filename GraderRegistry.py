@@ -13,7 +13,7 @@ class GraderRegistry:
     _registry: Dict[Tuple[Skill, Handedness], Type[Grader]] = {}
 
     @classmethod
-    def register(cls, skill: Skill, handedness: Handedness, grader_class: Type[Grader]):
+    def register(cls, skill: Skill, handedness: Handedness, grader_class: Type[Grader]) -> None:
         """
         Register a grader class for a specific skill and handedness.
 
