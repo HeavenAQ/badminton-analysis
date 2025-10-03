@@ -19,22 +19,23 @@ class TestVideoProcessor:
         assert hasattr(self.processor, "pose_detector")
 
     def test_moving_average_basic(self):
-        positions: Coordinates = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
+        positions: Coordinates = np.asarray(
+            [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)], dtype=float
+        )
         smoothed = self.processor.moving_average(positions, window_size=3)
 
-        assert len(smoothed) == len(positions)
-        assert isinstance(smoothed, list)
-        assert all(isinstance(pos, tuple) for pos in smoothed)
+        assert isinstance(smoothed, np.ndarray)
+        assert smoothed.shape == positions.shape
 
     def test_moving_average_edge_padding(self):
-        positions: Coordinates = [(0, 0), (10, 10)]
+        positions: Coordinates = np.asarray([(0, 0), (10, 10)], dtype=float)
         smoothed = self.processor.moving_average(
             positions, window_size=3, pad_mode="edge"
         )
 
-        assert len(smoothed) == 2
-        # With edge padding, first point is average of [(0,0), (0,0), (10,10)] = (3.33, 3.33)
-        assert smoothed[0] == pytest.approx((3.33, 3.33), abs=0.1)
+        assert smoothed.shape[0] == 2
+        # With edge padding, first point is average of [(0,0), (0,0), (10,10)] ~ (3.33, 3.33)
+        np.testing.assert_allclose(smoothed[0], np.array([3.33, 3.33]), atol=0.1)
 
     def test_calculate_velocity_dynamic(self):
         positions: Coordinates = [(0, 0), (3, 4), (6, 8)]
@@ -138,7 +139,7 @@ class TestVideoProcessor:
         with patch.object(
             self.processor,
             "moving_average",
-            return_value=[(i, 100 - i) for i in range(num_frames)],
+            return_value=np.asarray([(i, 100 - i) for i in range(num_frames)], dtype=float),
         ):
             with patch.object(
                 self.processor,

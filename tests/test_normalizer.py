@@ -88,9 +88,9 @@ class TestBodyCentricNormalizer:
         )
 
         # Point (0,0) should transform to (-5, -5) relative to origin (5,5)
-        assert result[COCOKeypoints.LEFT_SHOULDER] == (-5, -5)
+        np.testing.assert_allclose(result[COCOKeypoints.LEFT_SHOULDER], np.array([-5, -5]))
         # Point (10,0) should transform to (5, -5) relative to origin (5,5)
-        assert result[COCOKeypoints.RIGHT_SHOULDER] == (5, -5)
+        np.testing.assert_allclose(result[COCOKeypoints.RIGHT_SHOULDER], np.array([5, -5]))
 
     def test_apply_matrix_transformation_rotated_axes(self):
         # Test with rotated coordinate system (45 degrees)
@@ -112,8 +112,8 @@ class TestBodyCentricNormalizer:
 
         # Check that transformation preserves distances and angles correctly
         assert len(result) == 2
-        assert isinstance(result[COCOKeypoints.LEFT_SHOULDER], tuple)
-        assert isinstance(result[COCOKeypoints.RIGHT_SHOULDER], tuple)
+        assert isinstance(result[COCOKeypoints.LEFT_SHOULDER], np.ndarray)
+        assert isinstance(result[COCOKeypoints.RIGHT_SHOULDER], np.ndarray)
 
     def test_normalize_by_shoulder_width_basic(self):
         landmarks = {
@@ -127,9 +127,9 @@ class TestBodyCentricNormalizer:
         )
 
         # Shoulder width is 10, so all coordinates should be divided by 10
-        assert result[COCOKeypoints.LEFT_SHOULDER] == (0, 0)
-        assert result[COCOKeypoints.RIGHT_SHOULDER] == (1, 0)
-        assert result[COCOKeypoints.LEFT_ELBOW] == (0.5, 0.5)
+        np.testing.assert_allclose(result[COCOKeypoints.LEFT_SHOULDER], np.array([0.0, 0.0]))
+        np.testing.assert_allclose(result[COCOKeypoints.RIGHT_SHOULDER], np.array([1.0, 0.0]))
+        np.testing.assert_allclose(result[COCOKeypoints.LEFT_ELBOW], np.array([0.5, 0.5]))
 
     def test_normalize_by_shoulder_width_missing_shoulders(self):
         # Test with missing shoulder landmarks
@@ -164,10 +164,10 @@ class TestBodyCentricNormalizer:
         assert isinstance(result, dict)
         assert len(result) > 0
 
-        # All values should be tuples of (x, y) coordinates
+        # All values should be numpy arrays of (x, y) coordinates
         for joint, coordinate in result.items():
-            assert isinstance(coordinate, tuple)
-            assert len(coordinate) == 2
+            assert isinstance(coordinate, np.ndarray)
+            assert coordinate.shape == (2,)
             assert isinstance(coordinate[0], (int, float, np.number))
             assert isinstance(coordinate[1], (int, float, np.number))
 
@@ -206,10 +206,9 @@ class TestBodyCentricNormalizer:
         # Results should be very similar (accounting for numerical precision)
         for joint in original_result:
             if joint in offset_result:
-                orig_x, orig_y = original_result[joint]
-                off_x, off_y = offset_result[joint]
-                assert abs(orig_x - off_x) < 1e-10
-                assert abs(orig_y - off_y) < 1e-10
+                np.testing.assert_allclose(
+                    original_result[joint], offset_result[joint], atol=1e-10
+                )
 
     def test_normalize_pose_invariant_to_uniform_scaling(self):
         # Test that normalization is invariant to uniform scaling
@@ -225,10 +224,9 @@ class TestBodyCentricNormalizer:
         # Results should be identical after normalization
         for joint in original_result:
             if joint in scaled_result:
-                orig_x, orig_y = original_result[joint]
-                scaled_x, scaled_y = scaled_result[joint]
-                assert abs(orig_x - scaled_x) < 1e-10
-                assert abs(orig_y - scaled_y) < 1e-10
+                np.testing.assert_allclose(
+                    original_result[joint], scaled_result[joint], atol=1e-10
+                )
 
     def test_normalize_pose_handles_edge_case_zero_shoulder_width(self):
         # Test with zero shoulder width (degenerate case)

@@ -47,13 +47,18 @@ class VideoProcessor:
 
     def moving_average(
         self,
-        positions: Coordinates,
+        positions: np.ndarray | Coordinates,
         window_size: int = 5,
         pad_mode: Literal["edge"] | Literal["reflect"] = "edge",
-    ) -> Coordinates:
-        """Smooth positions using a moving average."""
+    ) -> np.ndarray:
+        """Smooth positions using a moving average.
+
+        Returns a NumPy array of shape (N, 2).
+        """
         # convert positions to numpy array
-        pos = np.asarray(positions, dtype=float)  # shape (N, 2)
+        pos = np.asarray(positions, dtype=np.float64)  # shape (N, 2)
+        if pos.ndim != 2 or pos.shape[1] != 2:
+            raise ValueError("positions must have shape (N, 2)")
 
         # convert kernel
         k = np.ones(window_size) / window_size
@@ -66,7 +71,7 @@ class VideoProcessor:
         # perform convolution to calculate the moving average
         xs = np.convolve(x, k, mode="valid")
         ys = np.convolve(y, k, mode="valid")
-        return list(zip(xs, ys))
+        return np.column_stack((xs, ys))
 
     def process_frames(
         self, skill: Skill, handedness: Handedness
@@ -168,9 +173,12 @@ class VideoProcessor:
             return np.array([])
         return np.diff(positions, axis=0) / self.time_intervals[1:]
 
-    def calculate_velocity(self, positions: Coordinates) -> np.ndarray:
+    def calculate_velocity(self, positions: np.ndarray | Coordinates) -> np.ndarray:
+        pos = np.asarray(positions, dtype=np.float64)
+        if pos.ndim != 2 or pos.shape[1] != 2:
+            raise ValueError("positions must have shape (N, 2)")
         displacement = np.linalg.norm(
-            np.diff(positions, axis=0),
+            np.diff(pos, axis=0),
             axis=1,
         )
         if len(self.time_intervals) < 2:
@@ -215,17 +223,23 @@ class VideoProcessor:
         sub_range_positions = self.hand_positions[search_start:search_end]
 
         peak_frame = initial_peak_acc_index
-        if sub_range_positions:
+        # Convert to array for consistent ops
+        if isinstance(sub_range_positions, list):
+            arr = np.asarray(sub_range_positions, dtype=float)
+        else:
+            arr = np.asarray(sub_range_positions, dtype=float)
+        if arr.size > 0:
             # In image coordinates, a higher Y value means a lower position on the screen
-            y_values = [pos[1] for pos in sub_range_positions]
-            lowest_hand_relative_index = np.argmax(y_values)
+            y_values = arr[:, 1]
+            lowest_hand_relative_index = int(np.argmax(y_values))
             peak_frame = search_start + lowest_hand_relative_index
 
         # Find the end of the motion using a custom elbow metric
         subset_elbow_pos = self.elbow_positions[peak_frame:]
+        arr_elbow = np.asarray(subset_elbow_pos, dtype=float)
         # This metric (x-y) seems to identify a specific point in the follow-through
-        composite_metric = [(pos[0] - pos[1]) for pos in subset_elbow_pos]
-        relative_end_index = np.argmax(composite_metric)
+        composite_metric = arr_elbow[:, 0] - arr_elbow[:, 1] if arr_elbow.size > 0 else np.array([])
+        relative_end_index = int(np.argmax(composite_metric)) if composite_metric.size > 0 else 0
         end_frame = peak_frame + relative_end_index
 
         # Define the final clip range with padding

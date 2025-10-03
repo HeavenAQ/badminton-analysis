@@ -117,7 +117,9 @@ class PoseDetector:
             for idx, (x, y) in enumerate(keypoints_xy):
                 conf = keypoints_conf[idx]
                 if conf > self.min_detection_confidence:
-                    body_coordinates[COCOKeypoints(idx)] = (float(x), float(y))
+                    body_coordinates[COCOKeypoints(idx)] = np.asarray(
+                        [float(x), float(y)], dtype=float
+                    )
             self.logger.debug("Retrieved pose landmarks")
             return body_coordinates
         else:
@@ -126,10 +128,10 @@ class PoseDetector:
 
     def compute_angle(
         self,
-        point_a: tuple[float, float],
-        point_b: tuple[float, float],
-        point_c: tuple[float, float],
-    ) -> Optional[float | NDArray[Any]]:
+        point_a: NDArray[np.float64],
+        point_b: NDArray[np.float64],
+        point_c: NDArray[np.float64],
+    ) -> Optional[float]:
         """
         Computes the angle between three 2D points.
 
@@ -145,6 +147,12 @@ class PoseDetector:
         a = np.asarray(point_a, dtype=np.float64)
         b = np.asarray(point_b, dtype=np.float64)
         c = np.asarray(point_c, dtype=np.float64)
+
+        # Validate shapes
+        if (
+            a.ndim != 1 or b.ndim != 1 or c.ndim != 1 or a.shape[0] != 2 or b.shape[0] != 2 or c.shape[0] != 2
+        ):
+            return None
 
         # Get vectors
         vector_ba = a - b
@@ -230,9 +238,9 @@ class PoseDetector:
     def show_angle_arc(
         self,
         img: np.ndarray,
-        point_a: tuple[float, float],
-        point_b: tuple[float, float],
-        point_c: tuple[float, float],
+        point_a: NDArray[np.float64],
+        point_b: NDArray[np.float64],
+        point_c: NDArray[np.float64],
         angle: float,
         color: tuple = (249, 210, 60),  # Light blue in BGR
         thickness: int = 2,
@@ -241,6 +249,12 @@ class PoseDetector:
         a = np.asarray(point_a, dtype=np.float64)
         b = np.asarray(point_b, dtype=np.float64)
         c = np.asarray(point_c, dtype=np.float64)
+
+        # Validate shapes
+        if (
+            a.ndim != 1 or b.ndim != 1 or c.ndim != 1 or a.shape[0] != 2 or b.shape[0] != 2 or c.shape[0] != 2
+        ):
+            return None
 
         # Vectors from point_b to point_a and point_b to point_c
         ba = a - b

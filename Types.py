@@ -1,6 +1,7 @@
 from enum import IntEnum
-from typing import Any, Dict, List, Tuple, TypedDict
+from typing import Any, Dict, List, Tuple, TypedDict, TypeAlias
 
+import numpy as np
 from numpy import floating
 from numpy.typing import NDArray
 
@@ -52,14 +53,15 @@ class Handedness(IntEnum):
 
 # Body Coordinate System
 class BodyCoordinateSystem(TypedDict):
-    origin: NDArray
-    x_axis: NDArray
-    y_axis: NDArray
+    origin: NDArray[np.float64]
+    x_axis: NDArray[np.float64]
+    y_axis: NDArray[np.float64]
 
 
-# body coordinates and angles
-Coordinate = Tuple[floating[Any], floating[Any]]
-Coordinates = List[Coordinate]
+# body coordinates and angles (standardized to NumPy arrays)
+# Note: Shapes are documented but not enforced at type level.
+Coordinate: TypeAlias = NDArray[np.float64]  # shape (2,)
+Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, 2)
 CoordinateDict = Dict[COCOKeypoints, Coordinate]
 CoordinatesDict = Dict[COCOKeypoints, Coordinates]
 AngleDict = Dict[str, float] | None

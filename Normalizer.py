@@ -75,9 +75,13 @@ class BodyCentricNormalizer:
 
         out: CoordinateDict = {}
         for joint, coordinate in landmarks.items():
-            translated = coordinate - origin
+            coord = np.asarray(coordinate, dtype=np.float64)
+            if coord.ndim != 1 or coord.shape[0] != 2:
+                # skip invalid coordinate
+                continue
+            translated = coord - origin
             x_y = rt @ translated
-            out[joint] = (x_y[0], x_y[1])
+            out[joint] = np.asarray(x_y, dtype=np.float64)
 
         self.logger.debug(f"Transformed {len(out)} landmarks to body coordinate system")
         return out
@@ -108,9 +112,9 @@ class BodyCentricNormalizer:
             f"Shoulder width: {scale_base}, normalizing {len(landmarks)} landmarks"
         )
 
-        # normalize every coordniate
+        # normalize every coordinate and return as numpy arrays
         normalized_landmarks = {
-            j: (x / scale_base, y / scale_base) for j, (x, y) in landmarks.items()
+            j: np.asarray(landmarks[j], dtype=float) / scale_base for j in landmarks
         }
         self.logger.info(
             f"Successfully normalized {len(normalized_landmarks)} landmarks"
