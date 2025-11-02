@@ -11,14 +11,6 @@ from Types import (
     AngleDict,
 )
 
-# Expert data
-serve_mean = pd.read_excel(
-    "./stats/serve/expert angle stats.xlsx", sheet_name="mean"
-).set_index("Unnamed: 0")
-serve_std = pd.read_excel(
-    "./stats/serve/expert angle stats.xlsx", sheet_name="std"
-).set_index("Unnamed: 0")
-
 
 def serve_angle_grader(
     angle_max_grade: float,
@@ -30,6 +22,12 @@ def serve_angle_grader(
     logger.debug(f"Grading angle for joint: {joint_name}, frame: {frame_idx}")
 
     # Use joint name and frame index to get the mean and std from the expert data
+    serve_mean = pd.read_excel(
+        "./stats/serve/expert angle stats.xlsx", sheet_name="mean"
+    ).set_index("Unnamed: 0")
+    serve_std = pd.read_excel(
+        "./stats/serve/expert angle stats.xlsx", sheet_name="std"
+    ).set_index("Unnamed: 0")
     idx = joint_name, frame_idx
     mean = float(serve_mean.loc[idx])
     std = float(serve_std.loc[idx])
@@ -112,7 +110,9 @@ class ServeGrader(Grader):
             return 10
         return 0
 
-    def grade_checkpoint_2(self, angle_dict1: AngleDict, angle_dict2: AngleDict) -> float:
+    def grade_checkpoint_2(
+        self, angle_dict1: AngleDict, angle_dict2: AngleDict
+    ) -> float:
         """
         Body weight transfer. Full score for this checkpoint: 20
         """

@@ -3,6 +3,7 @@ import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, mock_open
 from VideoProcessor import VideoProcessor
+from VideoAnalyzer import VideoAnalyzer
 from Types import Coordinates, Skill, Handedness
 
 
@@ -22,16 +23,14 @@ class TestVideoProcessor:
         positions: Coordinates = np.asarray(
             [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)], dtype=float
         )
-        smoothed = self.processor.moving_average(positions, window_size=3)
+        smoothed = VideoAnalyzer.moving_average(positions, window_size=3)
 
         assert isinstance(smoothed, np.ndarray)
         assert smoothed.shape == positions.shape
 
     def test_moving_average_edge_padding(self):
         positions: Coordinates = np.asarray([(0, 0), (10, 10)], dtype=float)
-        smoothed = self.processor.moving_average(
-            positions, window_size=3, pad_mode="edge"
-        )
+        smoothed = VideoAnalyzer.moving_average(positions, window_size=3, pad_mode="edge")
 
         assert smoothed.shape[0] == 2
         # With edge padding, first point is average of [(0,0), (0,0), (10,10)] ~ (3.33, 3.33)
@@ -39,22 +38,16 @@ class TestVideoProcessor:
 
     def test_calculate_velocity_dynamic(self):
         positions: Coordinates = [(0, 0), (3, 4), (6, 8)]
-
-        # Ensure time_intervals matches expected size
-        self.processor.time_intervals = [0.1, 0.1]  # 2 intervals for 3 positions
-
-        velocities = self.processor.calculate_velocity(positions)
+        time_intervals = [0.1, 0.1]  # 2 intervals for 3 positions
+        velocities = VideoAnalyzer.calculate_velocity(positions, time_intervals)
 
         assert len(velocities) == 2
         assert velocities[0] == pytest.approx(50.0, rel=1e-2)
 
     def test_calculate_acceleration_dynamic(self):
         velocities = np.asarray([10, 20, 30])
-
-        # Ensure time_intervals matches expected size for acceleration
-        self.processor.time_intervals = [0.1, 0.1]  # 2 intervals for 3 velocities
-
-        accelerations = self.processor.calculate_acceleration(velocities)
+        time_intervals = [0.1, 0.1]  # 2 intervals for 3 velocities
+        accelerations = VideoAnalyzer.calculate_acceleration(velocities, time_intervals)
 
         assert len(accelerations) == 2  # Should be len(velocities) - 1
         assert accelerations[0] == pytest.approx(100.0, rel=1e-2)
@@ -98,14 +91,16 @@ class TestVideoProcessor:
     #         signal.alarm(0)  # Cancel timeout
 
     def test_compute_angles_no_landmarks(self):
+        analyzer = VideoAnalyzer()
         # Test with empty normalized_landmarks
-        self.processor.normalized_landmarks = []
-        result = self.processor.compute_angles(0)
+        normalized_landmarks = []
+        # Use a dummy pose detector since it won't be called
+        result = analyzer.compute_angles(0, normalized_landmarks, MagicMock())
         assert result is None
-        
+
         # Test with frame index out of range
-        self.processor.normalized_landmarks = [{}]  # One empty landmark set
-        result = self.processor.compute_angles(1)  # Index 1 is out of range
+        normalized_landmarks = [{}]  # One empty landmark set
+        result = analyzer.compute_angles(1, normalized_landmarks, MagicMock())
         assert result is None
 
     @patch("VideoProcessor.cv2.VideoWriter")
@@ -129,29 +124,27 @@ class TestVideoProcessor:
     def test_find_analysis_window(self):
         # Setup data for the analysis window calculation
         num_frames = 100
-        self.processor.hand_positions = [(i, 100 - i) for i in range(num_frames)]
-        self.processor.elbow_positions = [(i, 50 - i // 2) for i in range(num_frames)]
-        self.processor.frames = [
-            np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(num_frames)
-        ]
+        hand_positions = [(i, 100 - i) for i in range(num_frames)]
+        elbow_positions = [(i, 50 - i // 2) for i in range(num_frames)]
+        analyzer = VideoAnalyzer()
 
         # Mock the methods that have array size issues to focus on testing the window logic
         with patch.object(
-            self.processor,
+            VideoAnalyzer,
             "moving_average",
             return_value=np.asarray([(i, 100 - i) for i in range(num_frames)], dtype=float),
         ):
             with patch.object(
-                self.processor,
+                VideoAnalyzer,
                 "calculate_velocity",
                 return_value=np.array([1.0] * (num_frames - 1)),
             ):
                 with patch.object(
-                    self.processor,
+                    VideoAnalyzer,
                     "calculate_acceleration",
                     return_value=np.array([0.1] * (num_frames - 2)),
                 ):
-                    start, peak, end = self.processor._find_analysis_window()
+                    start, peak, end = analyzer.find_analysis_window(hand_positions, elbow_positions)
 
         assert isinstance(start, int)
         assert isinstance(peak, int)
@@ -164,15 +157,13 @@ class TestVideoProcessor:
         mock_grader.grade.return_value = {"total_grade": 85, "grading_details": []}
         mock_grader_get.return_value = mock_grader
 
-        self.processor.frames = [
-            np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(10)
-        ]
-
+        analyzer = VideoAnalyzer()
+        normalized_landmarks = [{} for _ in range(10)]
         with patch.object(
-            self.processor, "compute_angles", return_value={"Right Elbow": 90}
+            VideoAnalyzer, "compute_angles", return_value={"Right Elbow": 90}
         ):
-            result = self.processor._calculate_grade(
-                Skill.SERVE, Handedness.RIGHT, (0, 5, 9)
+            result = analyzer.calculate_grade(
+                Skill.SERVE, Handedness.RIGHT, (0, 5, 9), normalized_landmarks, MagicMock()
             )
 
         assert result["total_grade"] == 85

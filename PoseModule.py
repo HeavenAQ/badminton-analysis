@@ -5,12 +5,21 @@ import cv2
 import numpy as np
 from cv2.typing import MatLike
 from numpy.typing import NDArray
-from ultralytics import YOLO
 
 from Logger import Logger
 from Types import CoordinateDict, COCOKeypoints
 from PIL import Image, ImageDraw, ImageFont
 from Joints import SKELETON_CONNECTIONS
+
+
+# Safely import YOLO; expose a module-level name for tests to patch.
+try:
+    from ultralytics import YOLO as _YOLO
+except Exception:  # ultralytics/torch may be unavailable in sandbox
+    _YOLO = None
+
+# Keep a public name so tests can patch `PoseModule.YOLO`
+YOLO = _YOLO
 
 
 class PoseDetector:
@@ -42,8 +51,15 @@ class PoseDetector:
         self.min_detection_confidence = min_detection_confidence
         self.landmarks: CoordinateDict = {}
 
-        # Initialize the YOLOv8 pose model
-        self.model = YOLO(model_path)
+        # Initialize the YOLOv8 pose model (if available)
+        if YOLO is None:
+            # Defer hard failure until actually used; helpful for tests
+            self.logger.info(
+                "Ultralytics YOLO not available; model will be initialized later or mocked"
+            )
+            self.model = None
+        else:
+            self.model = YOLO(model_path)
 
         # FPS settings
         self.__cur_time: float = 0.0
@@ -72,6 +88,60 @@ class PoseDetector:
         self.logger.debug(f"Current FPS calculated: {cur_fps}")
         return cur_fps
 
+    @staticmethod
+    def compute_angle(
+        point_a: NDArray[np.float64],
+        point_b: NDArray[np.float64],
+        point_c: NDArray[np.float64],
+    ) -> Optional[float]:
+        """
+        Computes the angle between three 2D points.
+
+        Args:
+            point_a (tuple[float, float]): The first point (x, y).
+            point_b (tuple[float, float]): The second point (x, y).
+            point_c (tuple[float, float]): The third point (x, y).
+
+        Returns:
+            float: The angle in degrees between the three points.
+        """
+        # Get the coordinates of the points
+        a = np.asarray(point_a, dtype=np.float64)
+        b = np.asarray(point_b, dtype=np.float64)
+        c = np.asarray(point_c, dtype=np.float64)
+
+        # Validate shapes
+        if (
+            a.ndim != 1
+            or b.ndim != 1
+            or c.ndim != 1
+            or a.shape[0] != 2
+            or b.shape[0] != 2
+            or c.shape[0] != 2
+        ):
+            return None
+
+        # Get vectors
+        vector_ba = a - b
+        vector_bc = c - b
+
+        # Compute the norms
+        norm_ba = np.linalg.norm(vector_ba)
+        norm_bc = np.linalg.norm(vector_bc)
+
+        # Avoid division by zero
+        if norm_ba == 0 or norm_bc == 0:
+            return None
+
+        # Compute the cosine and clip it to the range [-1, 1]
+        # ba @ bc = magnitude of vector ba * magnitude of vector bc * cos(theta)
+        cos_theta = (vector_ba @ vector_bc) / (norm_ba * norm_bc)
+        cos_theta = np.clip(cos_theta, -1, 1)
+
+        # Compute the angle in radians and convert it to degree
+        angle_radian = np.arccos(cos_theta)
+        return float(np.rad2deg(angle_radian))
+
     def get_pose(self, img: MatLike) -> Any:
         """
         Detects the pose in the given image and returns the results.
@@ -87,6 +157,14 @@ class PoseDetector:
             f"Processing image for pose detection, image shape: {img.shape}"
         )
         # Run pose estimation
+        if self.model is None:
+            # Lazy init attempt in case YOLO became available at runtime
+            if YOLO is None:
+                raise RuntimeError(
+                    "Pose model is not initialized and Ultralytics YOLO is unavailable."
+                )
+            self.model = YOLO("yolo11m-pose.pt")
+
         results = self.model.predict(img, conf=self.min_detection_confidence)
         self.logger.debug("Pose estimation completed")
         return results
@@ -125,55 +203,6 @@ class PoseDetector:
         else:
             self.logger.error("No pose landmarks detected")
             return None
-
-    def compute_angle(
-        self,
-        point_a: NDArray[np.float64],
-        point_b: NDArray[np.float64],
-        point_c: NDArray[np.float64],
-    ) -> Optional[float]:
-        """
-        Computes the angle between three 2D points.
-
-        Args:
-            point_a (tuple[float, float]): The first point (x, y).
-            point_b (tuple[float, float]): The second point (x, y).
-            point_c (tuple[float, float]): The third point (x, y).
-
-        Returns:
-            float: The angle in degrees between the three points.
-        """
-        # Get the coordinates of the points
-        a = np.asarray(point_a, dtype=np.float64)
-        b = np.asarray(point_b, dtype=np.float64)
-        c = np.asarray(point_c, dtype=np.float64)
-
-        # Validate shapes
-        if (
-            a.ndim != 1 or b.ndim != 1 or c.ndim != 1 or a.shape[0] != 2 or b.shape[0] != 2 or c.shape[0] != 2
-        ):
-            return None
-
-        # Get vectors
-        vector_ba = a - b
-        vector_bc = c - b
-
-        # Compute the norms
-        norm_ba = np.linalg.norm(vector_ba)
-        norm_bc = np.linalg.norm(vector_bc)
-
-        # Avoid division by zero
-        if norm_ba == 0 or norm_bc == 0:
-            return None
-
-        # Compute the cosine and clip it to the range [-1, 1]
-        # ba @ bc = magnitude of vector ba * magnitude of vector bc * cos(theta)
-        cos_theta = (vector_ba @ vector_bc) / (norm_ba * norm_bc)
-        cos_theta = np.clip(cos_theta, -1, 1)
-
-        # Compute the angle in radians and convert it to degree
-        angle_radian = np.arccos(cos_theta)
-        return float(np.rad2deg(angle_radian))
 
     def show_pose(self, img: MatLike, landmarks: Optional[CoordinateDict]) -> None:
         """
@@ -255,7 +284,12 @@ class PoseDetector:
 
         # Validate shapes
         if (
-            a.ndim != 1 or b.ndim != 1 or c.ndim != 1 or a.shape[0] != 2 or b.shape[0] != 2 or c.shape[0] != 2
+            a.ndim != 1
+            or b.ndim != 1
+            or c.ndim != 1
+            or a.shape[0] != 2
+            or b.shape[0] != 2
+            or c.shape[0] != 2
         ):
             return None
 
@@ -310,7 +344,12 @@ class PoseDetector:
 
     # Helper moethod that adds text to an image using Pillow (private method)
     def __add_text_with_pillow(
-        self, img: np.ndarray, text: str, position: tuple[int, int], font_size: int = 20, color: tuple[int, int, int] = (255, 255, 255)
+        self,
+        img: np.ndarray,
+        text: str,
+        position: tuple[int, int],
+        font_size: int = 20,
+        color: tuple[int, int, int] = (255, 255, 255),
     ) -> None:
         """
         Add text with Pillow onto an OpenCV image.
@@ -325,8 +364,8 @@ class PoseDetector:
         pil_image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
 
-        # Load the font
-        font = ImageFont.load_default(size=font_size)
+        # Load the font (use default; size parameter not supported by all Pillow versions)
+        font = ImageFont.load_default()
 
         # Add text to the image
         draw.text(position, text, font=font, fill=color)

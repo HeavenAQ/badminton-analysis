@@ -17,8 +17,8 @@ from Types import (
 # Local constants (duplicated from VideoProcessor to avoid circular imports)
 SMOOTHING_WINDOW_SIZE = 5
 PEAK_ACCELERATION_OFFSET = 2
-IMPACT_FRAME_SEARCH_WINDOW_BEFORE = 15
-IMPACT_FRAME_SEARCH_WINDOW_AFTER = 20
+IMPACT_FRAME_SEARCH_WINDOW_BEFORE = 60
+IMPACT_FRAME_SEARCH_WINDOW_AFTER = 60
 ANALYSIS_WINDOW_PADDING_BEFORE = 30
 
 
@@ -78,39 +78,39 @@ class VideoAnalyzer:
     def find_analysis_window(
         self,
         hand_positions: list[Coordinate],
-        elbow_positions: list[Coordinate],
+        elbow_positions: list[Coordinate] | None = None,
     ) -> Tuple[int, int, int]:
         self.logger.debug("Finding analysis window using kinematic analysis")
 
-        smoothed_positions = self.moving_average(
-            hand_positions, window_size=SMOOTHING_WINDOW_SIZE
-        )
-        synthetic_intervals = [1.0] * max(1, len(smoothed_positions))
-        velocities = self.calculate_velocity(smoothed_positions, synthetic_intervals)
+        # smoothed_positions = self.moving_average(
+        #     hand_positions, window_size=SMOOTHING_WINDOW_SIZE
+        # )
+        synthetic_intervals = [1.0] * max(1, len(hand_positions))
+        velocities = self.calculate_velocity(hand_positions, synthetic_intervals)
         accelerations = self.calculate_acceleration(velocities, synthetic_intervals)
 
-        initial_peak_acc_index = (
-            int(np.argmax(accelerations)) + PEAK_ACCELERATION_OFFSET
-            if accelerations.size > 0
-            else 0
-        )
-
-        search_start = max(
-            0, initial_peak_acc_index - IMPACT_FRAME_SEARCH_WINDOW_BEFORE
-        )
-        search_end = min(
+        peak_frame = int(np.argmax(accelerations)) if accelerations.size > 0 else 0
+        start_frame = max(0, peak_frame - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
+        end_frame = min(
             len(hand_positions),
-            initial_peak_acc_index + IMPACT_FRAME_SEARCH_WINDOW_AFTER,
+            peak_frame + IMPACT_FRAME_SEARCH_WINDOW_AFTER,
         )
+        return start_frame, peak_frame, end_frame
 
-        sub_range_positions = hand_positions[int(search_start) : int(search_end)]
-
-        peak_frame = initial_peak_acc_index
+    def find_serve_analysis_window(
+        self,
+        hand_positions: list[Coordinate],
+        elbow_positions: list[Coordinate],
+        start_frame: int,
+        peak_frame: int,
+        end_frame: int,
+    ) -> Tuple[int, int, int]:
+        sub_range_positions = hand_positions[int(start_frame) : int(end_frame)]
         arr = np.asarray(sub_range_positions, dtype=np.float64)
         if arr.size > 0:
             y_values = arr[:, 1]
             lowest_hand_relative_index = int(np.argmax(y_values))
-            peak_frame = search_start + lowest_hand_relative_index
+            peak_frame = start_frame + lowest_hand_relative_index
 
         subset_elbow_pos = elbow_positions[peak_frame:]
         arr_elbow = np.asarray(subset_elbow_pos, dtype=np.float64)
@@ -135,7 +135,7 @@ class VideoAnalyzer:
         self,
         frame_index: int,
         normalized_landmarks: list[CoordinateDict | None],
-        pose_detector: PoseDetector,
+        pose_detector: PoseDetector | None = None,
     ) -> Optional[dict[str, float]]:
         if (
             frame_index >= len(normalized_landmarks)
@@ -155,7 +155,8 @@ class VideoAnalyzer:
                 point_a = landmarks[point_a_id]
                 point_b = landmarks[point_b_id]
                 point_c = landmarks[point_c_id]
-                angle = pose_detector.compute_angle(point_a, point_b, point_c)
+                # Use static compute_angle from PoseDetector; instance not required
+                angle = PoseDetector.compute_angle(point_a, point_b, point_c)
                 if angle is not None and isinstance(angle, float):
                     angles[joint_name] = angle
         return angles
@@ -166,7 +167,7 @@ class VideoAnalyzer:
         handedness: Handedness,
         window: Tuple[int, int, int],
         normalized_landmarks: list[CoordinateDict | None],
-        pose_detector: PoseDetector,
+        pose_detector: PoseDetector | None = None,
     ) -> GraderResult:
         start, peak, end = window
         key_frames_indices = (start, (start + peak) // 2, peak, (peak + end) // 2, end)

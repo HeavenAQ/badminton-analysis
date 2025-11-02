@@ -1,5 +1,5 @@
 from typing import Dict, Tuple, Type
-from FootworkGrader import FootworkGrader
+from FootworkGrader import BackCourtFootworkGrader
 from Grader import Grader
 from Logger import Logger
 from ServeGrader import ServeGrader
@@ -13,7 +13,9 @@ class GraderRegistry:
     _registry: Dict[Tuple[Skill, Handedness], Type[Grader]] = {}
 
     @classmethod
-    def register(cls, skill: Skill, handedness: Handedness, grader_class: Type[Grader]) -> None:
+    def register(
+        cls, skill: Skill, handedness: Handedness, grader_class: Type[Grader]
+    ) -> None:
         """
         Register a grader class for a specific skill and handedness.
 
@@ -56,5 +58,5 @@ class GraderRegistry:
 
 GraderRegistry.register(Skill.SERVE, Handedness.LEFT, ServeGrader)
 GraderRegistry.register(Skill.SERVE, Handedness.RIGHT, ServeGrader)
-GraderRegistry.register(Skill.FOOTWORK, Handedness.LEFT, FootworkGrader)
-GraderRegistry.register(Skill.FOOTWORK, Handedness.RIGHT, FootworkGrader)
+GraderRegistry.register(Skill.FOOTWORK, Handedness.LEFT, BackCourtFootworkGrader)
+GraderRegistry.register(Skill.FOOTWORK, Handedness.RIGHT, BackCourtFootworkGrader)

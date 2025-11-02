@@ -7,6 +7,7 @@ from typing import Any, Callable, TypeVar, Protocol
 class _LogMethod(Protocol):
     def __call__(self, __self: Any, __message: str) -> None: ...
 
+
 F = TypeVar("F", bound=_LogMethod)
 
 
@@ -20,7 +21,7 @@ def log_with_frame_info(log_method: F) -> F:
                 enhanced_message = (
                     f"{message} - {caller.f_code.co_filename}:{caller.f_lineno}"
                 )
-                log_method(self, enhanced_message)  # Don't return the result
+                log_method(self, enhanced_message)
             else:
                 log_method(self, message)
         finally:
@@ -32,7 +33,7 @@ def log_with_frame_info(log_method: F) -> F:
 class Logger:
     def __init__(self, name: str) -> None:
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)  # Show debug too
+        self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
             "{asctime} - {levelname} - {message}",
