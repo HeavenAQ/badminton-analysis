@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
-from Normalizer import BodyCentricNormalizer
-from Types import COCOKeypoints
+from normalization import BodyCentricNormalizer
+from core.types import COCOKeypoints
 
 
 class TestBodyCentricNormalizer:

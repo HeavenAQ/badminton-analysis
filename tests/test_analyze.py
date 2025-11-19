@@ -2,9 +2,9 @@ import json
 import numpy as np
 from pathlib import Path
 
-from analyze import save_angles_to_json, pose_detector
-from VideoAnalyzer import VideoAnalyzer
-from Types import COCOKeypoints
+from tools.analyze import save_angles_to_json, pose_detector
+from analysis import VideoAnalyzer
+from core.types import COCOKeypoints
 
 
 def _make_landmarks() -> dict:

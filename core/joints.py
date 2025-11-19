@@ -1,4 +1,4 @@
-from Types import COCOKeypoints
+from core.types import COCOKeypoints
 
 JOINTS = {
     "Left Elbow": (
@@ -67,3 +67,4 @@ SKELETON_CONNECTIONS = [
     (COCOKeypoints.LEFT_SHOULDER, COCOKeypoints.LEFT_HIP),
     (COCOKeypoints.RIGHT_SHOULDER, COCOKeypoints.RIGHT_HIP),
 ]
+

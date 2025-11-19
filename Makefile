@@ -5,8 +5,10 @@ MYPY ?= mypy
 # Video demo parameters (can be overridden: `make video VIDEO=your.mp4 OUTPUT=out.mp4`)
 VIDEO ?= test.mp4
 OUTPUT ?= analyzed.mp4
+BATCH_INPUT ?= training_videos
+BATCH_OUTPUT ?= stats
 
-.PHONY: help install type test test-v test-all video clean ci
+.PHONY: help install type test test-v test-all video batch clean ci
 
 help:
 	@echo "Targets:"
@@ -16,6 +18,7 @@ help:
 	@echo "  test-v    - Run test suite (verbose)"
 	@echo "  test-all  - Run type checks, then tests"
 	@echo "  video     - Generate analyzed video from $(VIDEO) -> $(OUTPUT)"
+	@echo "  batch     - Batch analyze a directory of videos (BATCH_INPUT -> BATCH_OUTPUT)"
 	@echo "  ci        - Same as test-all (convenience for local CI run)"
 	@echo "  clean     - Remove caches and generated videos"
 
@@ -40,8 +43,10 @@ video:
 	$(PY) main.py $(VIDEO) --output $(OUTPUT)
 	@echo "Saved analyzed video to: $(OUTPUT)"
 
-clean:
-	rm -rf __pycache__ .pytest_cache
-	rm -f segment.mp4 $(OUTPUT)
-	@echo "Cleaned build artifacts and videos"
+batch:
+	$(PY) -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"
 
+clean:
+	rm -rf __pycache__ .pytest_cache stats
+	rm -f segment.mp4 $(OUTPUT) analyzed.mp4
+	@echo "Cleaned build artifacts and videos"

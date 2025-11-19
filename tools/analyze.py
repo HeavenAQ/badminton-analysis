@@ -2,17 +2,16 @@ import os
 import cv2
 import time
 import json
+import argparse
 import threading
-from queue import Queue
+from typing import Tuple
 from cv2.typing import MatLike
-
 from pose import PoseDetector
-from normalization import BodyCentricNormalizer
-from analysis import VideoAnalyzer
 from core.types import COCOKeypoints
+from analysis import VideoAnalyzer
+from normalization import BodyCentricNormalizer
+from queue import Queue
 
-
-# Keep a module-level detector like the original for downstream reuse/tests
 pose_detector = PoseDetector(model_path="yolo11m-pose.pt", min_detection_confidence=0.5)
 
 
@@ -24,11 +23,9 @@ def process_video(video_path: str, output_dir: str) -> None:
     timestamp_queue: Queue[float] = Queue()
     time_intervals: list[float] = []
     frames: list[MatLike] = []
-
-    # Store normalized landmarks per processed frame for angle computation
     normalized_landmarks_list: list[dict | None] = []
-    hand_positions: list[tuple[float, float]] = []
-    elbow_positions: list[tuple[float, float]] = []
+    hand_positions: list[Tuple[float, float]] = []
+    elbow_positions: list[Tuple[float, float]] = []
 
     def frame_capture() -> None:
         prev_time = time.perf_counter()
@@ -36,11 +33,9 @@ def process_video(video_path: str, output_dir: str) -> None:
             success, frame = cap.read()
             if not success:
                 break
-
             current_time = time.perf_counter()
             time_interval = current_time - prev_time
             prev_time = current_time
-
             if not frame_queue.full():
                 frame_queue.put(frame.copy())
                 timestamp_queue.put(time_interval)
@@ -49,29 +44,22 @@ def process_video(video_path: str, output_dir: str) -> None:
     capture_thread = threading.Thread(target=frame_capture, daemon=True)
     capture_thread.start()
 
-    # Process frames
     while True:
         if not frame_queue.empty():
             frame = frame_queue.get()
             time_interval = timestamp_queue.get()
             time_intervals.append(time_interval)
-
-            # Run pose detection
             results = pose_detector.get_pose(frame)
             landmarks = pose_detector.get_2d_landmarks(results)
             if landmarks is None:
                 print("Failed to get the joint landmarks")
                 continue
-
             normalized = normalizer.normalize_pose(landmarks)
             normalized_landmarks_list.append(normalized)
-
-            # Collect dominant hand/elbow positions (original coords)
             right_wrist = landmarks.get(COCOKeypoints.RIGHT_WRIST)
             if right_wrist is not None:
                 hand_positions.append((float(right_wrist[0]), float(right_wrist[1])))
                 frames.append(frame.copy())
-
             right_elbow = landmarks.get(COCOKeypoints.RIGHT_ELBOW)
             if right_elbow is not None:
                 elbow_positions.append((float(right_elbow[0]), float(right_elbow[1])))
@@ -81,21 +69,12 @@ def process_video(video_path: str, output_dir: str) -> None:
 
     cap.release()
 
-    # Calculate the result
     analyzer = VideoAnalyzer()
     video_name = os.path.splitext(os.path.basename(video_path))[0]
     if len(hand_positions) > 2:
-        # Window for smash (keeps parity with the original)
         start, peak, end = analyzer.find_smash_analysis_window(hand_positions)  # type: ignore[arg-type]
-        key_frames = (
-            start,
-            (start + peak) // 2,
-            peak,
-            (peak + end) // 2,
-            end,
-        )
+        key_frames = (start, (start + peak) // 2, peak, (peak + end) // 2, end)
 
-        # Save frame images for reference
         for i, f_idx in enumerate(key_frames):
             frame_dir = os.path.join(output_dir, f"frame{i}")
             os.makedirs(frame_dir, exist_ok=True)
@@ -124,7 +103,6 @@ def save_angles_to_json(
         analyzer.compute_angles(idx, normalized_landmarks, pose_detector)
         for idx in key_frames
     ]
-
     output_json_path = os.path.join(output_dir, "training_data.json")
     if os.path.exists(output_json_path):
         with open(output_json_path, "r") as f:
@@ -137,7 +115,6 @@ def save_angles_to_json(
 
 
 def process_videos_in_dir(input_dir: str, output_dir: str) -> None:
-    # create directories if not exist
     os.makedirs(output_dir, exist_ok=True)
     for video_file in os.listdir(input_dir):
         if video_file.lower().endswith((".mp4", ".mov")):
@@ -147,8 +124,22 @@ def process_videos_in_dir(input_dir: str, output_dir: str) -> None:
     print("All videos processed successfully")
 
 
-if __name__ == "__main__":
-    input_dir = "./training_videos/left/右前/"
-    output_dir = "./stats/left/右前/"
-    process_videos_in_dir(input_dir, output_dir)
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Batch analyze badminton videos and export key frames + angles",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--input", required=True, help="Input directory of videos")
+    parser.add_argument("--output", required=True, help="Output directory for stats")
+    args = parser.parse_args()
 
+    if not os.path.isdir(args.input):
+        print(f"Error: input directory not found: {args.input}")
+        return 1
+    os.makedirs(args.output, exist_ok=True)
+    process_videos_in_dir(args.input, args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

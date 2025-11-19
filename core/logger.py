@@ -1,7 +1,7 @@
 import logging
 import inspect
 from functools import wraps
-from typing import Any, Callable, TypeVar, Protocol
+from typing import Any, TypeVar, Protocol
 
 
 class _LogMethod(Protocol):
@@ -62,3 +62,4 @@ class Logger:
     @log_with_frame_info
     def critical(self, message: str) -> None:
         self.logger.critical(message)
+

@@ -1,27 +1,25 @@
 """
 Main script for badminton pose analysis with skeleton and angle visualization.
-Allows users to input video files and see real-time visualization of pose detection,
-skeleton tracking, and joint angle calculations.
+Keeps the root entrypoint while core code lives in organized subpackages.
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
-from PoseModule import PoseDetector
-from Normalizer import BodyCentricNormalizer
-from Types import COCOKeypoints, Skill, Handedness
-from Joints import JOINTS
-from Logger import Logger
+from pose import PoseDetector
+from normalization import BodyCentricNormalizer
+from core.types import Skill, Handedness
+from core.joints import JOINTS
+from core.logger import Logger
 
 
-class VideoAnalyzer:
-    """Main class for analyzing videos with pose detection and angle visualization."""
+class LiveVideoAnalyzer:
+    """Live visualization of skeleton and joint angles for a given video."""
 
     def __init__(self) -> None:
         self.logger = Logger(self.__class__.__name__)
@@ -35,28 +33,16 @@ class VideoAnalyzer:
         handedness: Optional[Handedness] = None,
         output_path: Optional[str] = None,
     ) -> None:
-        """
-        Process video with live visualization of skeleton and angles,
-        and optionally save the processed video.
-
-        Args:
-            video_path: Path to the input video file
-            skill: Optional skill type for analysis (not used in visualization)
-            handedness: Optional handedness for analysis (not used in visualization)
-            output_path: Path to save the analyzed video (optional)
-        """
         if not os.path.exists(video_path):
             self.logger.error(f"Video file not found: {video_path}")
             return
 
         self.logger.info(f"Starting live analysis of: {video_path}")
         cap = cv2.VideoCapture(video_path)
-
         if not cap.isOpened():
             self.logger.error(f"Failed to open video: {video_path}")
             return
 
-        # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -66,10 +52,9 @@ class VideoAnalyzer:
             f"Video properties: {width}x{height}, {fps:.2f} FPS, {total_frames} frames"
         )
 
-        # Setup VideoWriter if output path is provided
         writer = None
         if output_path:
-            fourcc = cv2.VideoWriter.fourcc(*"mp4v")  # or 'XVID' for .avi
+            fourcc = cv2.VideoWriter.fourcc(*"mp4v")
             writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
             self.logger.info(f"Saving analyzed video to: {output_path}")
 
@@ -87,17 +72,15 @@ class VideoAnalyzer:
                 frame_count += 1
                 processed_frame = self.process_frame(frame, frame_count, total_frames)
 
-                # Write frame to output video
                 if writer:
                     writer.write(processed_frame)
 
-                # Display the frame
                 cv2.imshow(
                     "Badminton Analysis - Press SPACE to pause, Q to quit",
                     processed_frame,
                 )
 
-            key = cv2.waitKey(int(1000 / fps)) & 0xFF
+            key = cv2.waitKey(int(1000 / max(fps, 1))) & 0xFF
             if key == ord("q") or key == 27:
                 break
             elif key == ord(" "):
@@ -114,21 +97,8 @@ class VideoAnalyzer:
     def process_frame(
         self, frame: np.ndarray, frame_num: int, total_frames: int
     ) -> np.ndarray:
-        """
-        Process a single frame and add pose detection and angle visualization.
-
-        Args:
-            frame: Input frame from video
-            frame_num: Current frame number
-            total_frames: Total number of frames
-
-        Returns:
-            Processed frame with visualizations
-        """
-        # Create a copy to avoid modifying the original
         display_frame = frame.copy()
 
-        # Add frame counter
         cv2.putText(
             display_frame,
             f"Frame: {frame_num}/{total_frames}",
@@ -139,21 +109,12 @@ class VideoAnalyzer:
             2,
         )
 
-        # Detect pose
         results = self.pose_detector.get_pose(frame)
         landmarks = self.pose_detector.get_2d_landmarks(results)
 
         if landmarks:
-            # Normalize the pose
-            normalized_landmarks = self.normalizer.normalize_pose(landmarks)
-
-            # Draw pose skeleton
             self.pose_detector.show_pose(display_frame, landmarks)
-
-            # Calculate and display angles
             self.draw_angles(display_frame, landmarks)
-
-            # Add pose detection status
             cv2.putText(
                 display_frame,
                 "POSE DETECTED",
@@ -164,7 +125,6 @@ class VideoAnalyzer:
                 2,
             )
         else:
-            # Add no pose detection status
             cv2.putText(
                 display_frame,
                 "NO POSE DETECTED",
@@ -175,42 +135,25 @@ class VideoAnalyzer:
                 2,
             )
 
-        # Show FPS
         self.pose_detector.show_fps(display_frame)
-
         return display_frame
 
     def draw_angles(self, frame: np.ndarray, landmarks: dict) -> None:
-        """
-        Draw angle arcs and values on the frame.
-
-        Args:
-            frame: Frame to draw on
-            landmarks: Detected landmarks
-        """
         angle_count = 0
-
         for joint_name, (point_a_id, point_b_id, point_c_id) in JOINTS.items():
-            # Skip certain angles that might clutter the display
             if joint_name in ("Nose Right Shoulder Elbow", "Nose Left Shoulder Elbow"):
                 continue
-
             if all(kp in landmarks for kp in (point_a_id, point_b_id, point_c_id)):
                 point_a = landmarks[point_a_id]
                 point_b = landmarks[point_b_id]
                 point_c = landmarks[point_c_id]
-
-                # Compute the angle
                 angle = self.pose_detector.compute_angle(point_a, point_b, point_c)
-
                 if angle is not None and isinstance(angle, float):
-                    # Draw the angle arc
                     self.pose_detector.show_angle_arc(
                         frame, point_a, point_b, point_c, angle
                     )
                     angle_count += 1
 
-        # Show angle count
         cv2.putText(
             frame,
             f"Angles: {angle_count}",
@@ -223,49 +166,28 @@ class VideoAnalyzer:
 
 
 def main() -> int:
-    """Main function to run the video analyzer."""
     parser = argparse.ArgumentParser(
         description="Badminton Pose Analysis - Visualize skeleton and joint angles",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
     parser.add_argument("video_path", help="Path to the input video file")
-
-    parser.add_argument(
-        "--skill",
-        choices=["serve", "clear"],
-        help="Skill type for analysis (optional, for future use)",
-    )
-
-    parser.add_argument(
-        "--handedness",
-        choices=["left", "right"],
-        help="Handedness for analysis (optional, for future use)",
-    )
-
-    parser.add_argument(
-        "--output",
-        help="Path to save the analyzed video (optional, e.g. output.mp4)",
-    )
-
+    parser.add_argument("--skill", choices=["serve", "clear"], help="Skill type")
+    parser.add_argument("--handedness", choices=["left", "right"], help="Handedness")
+    parser.add_argument("--output", help="Path to save the analyzed video")
     args = parser.parse_args()
 
-    # Validate video file exists
     if not os.path.exists(args.video_path):
         print(f"Error: Video file '{args.video_path}' not found.")
         return 1
 
-    # Convert string arguments to enums if provided
     skill = None
     handedness = None
-
     if args.skill:
         try:
             skill = Skill.convert_to_enum(args.skill)
         except KeyError:
             print(f"Error: Invalid skill '{args.skill}'. Choose from: serve, clear")
             return 1
-
     if args.handedness:
         try:
             handedness = Handedness.convert_to_enum(args.handedness)
@@ -275,15 +197,9 @@ def main() -> int:
             )
             return 1
 
-    # Create analyzer and process video
-    analyzer = VideoAnalyzer()
-
+    analyzer = LiveVideoAnalyzer()
     print(f"Starting analysis of: {args.video_path}")
-    print("Controls:")
-    print("  SPACE - Pause/Resume")
-    print("  Q or ESC - Quit")
-    print("")
-
+    print("Controls:\n  SPACE - Pause/Resume\n  Q or ESC - Quit\n")
     try:
         analyzer.process_video_live(args.video_path, skill, handedness, args.output)
         return 0

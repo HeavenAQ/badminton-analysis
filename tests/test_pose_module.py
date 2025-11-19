@@ -1,15 +1,15 @@
 import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, PropertyMock
-from PoseModule import PoseDetector
-from Types import COCOKeypoints
+from pose import PoseDetector
+from core.types import COCOKeypoints
 
 
 class TestPoseDetector:
     def setup_method(self, method):
-        with patch("PoseModule.YOLO") as mock_yolo:
+        with patch("pose.detector.YOLO") as mock_yolo:
             mock_yolo.return_value = MagicMock()
-            with patch("PoseModule.Logger") as mock_logger:  # Mock the Logger
+            with patch("core.logger.Logger") as mock_logger:  # Mock the Logger
                 mock_logger.return_value.info = MagicMock()  # Mock the info method
                 self.detector = PoseDetector()
 
@@ -55,8 +55,8 @@ class TestPoseDetector:
         angle = self.detector.compute_angle(point_a, point_b, point_c)
         assert angle is None
 
-    @patch("PoseModule.cv2.line")
-    @patch("PoseModule.cv2.circle")
+    @patch("pose.detector.cv2.line")
+    @patch("pose.detector.cv2.circle")
     def test_show_pose_with_valid_landmarks(self, mock_circle, mock_line):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
         landmarks = {
@@ -70,7 +70,7 @@ class TestPoseDetector:
         img = np.zeros((480, 640, 3), dtype=np.uint8)
         self.detector.show_pose(img, None)
 
-    # @patch("PoseModule.cv2.putText")
+    # @patch("pose.detector.cv2.putText")
     # def test_show_fps(self, mock_put_text):
     #     img = np.zeros((480, 640, 3), dtype=np.uint8)
     #
@@ -127,7 +127,7 @@ class TestPoseDetector:
         assert isinstance(landmarks, dict)
         assert len(landmarks) == 2
 
-    @patch("PoseModule.cv2.ellipse")
+    @patch("pose.detector.cv2.ellipse")
     @patch.object(PoseDetector, "_PoseDetector__add_text_with_pillow")
     def test_show_angle_arc(self, mock_add_text, mock_ellipse):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -141,9 +141,9 @@ class TestPoseDetector:
         mock_ellipse.assert_called_once()
         mock_add_text.assert_called_once()
 
-    @patch("PoseModule.Image.fromarray")
-    @patch("PoseModule.cv2.cvtColor")
-    @patch("PoseModule.np.copyto")
+    @patch("pose.detector.Image.fromarray")
+    @patch("pose.detector.cv2.cvtColor")
+    @patch("pose.detector.np.copyto")
     def test_add_text_with_pillow(self, mock_copyto, mock_cvtcolor, mock_from_array):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
         text = "Test°"
@@ -153,8 +153,8 @@ class TestPoseDetector:
         mock_draw = MagicMock()
         mock_from_array.return_value = mock_pil_image
         
-        with patch("PoseModule.ImageDraw.Draw", return_value=mock_draw):
-            with patch("PoseModule.ImageFont.load_default") as mock_font:
+        with patch("pose.detector.ImageDraw.Draw", return_value=mock_draw):
+            with patch("pose.detector.ImageFont.load_default") as mock_font:
                 mock_font.return_value = "mock_font"
                 
                 # Access the private method for testing

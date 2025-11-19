@@ -1,8 +1,8 @@
-from typing import cast
+from typing import Any
 import pandas as pd
-from Grader import Grader, EMPTY_GRADER_RESULT
-from Logger import Logger
-from Types import (
+from .base import Grader, EMPTY_GRADER_RESULT
+from core.logger import Logger
+from core.types import (
     AngleDicts,
     GraderInput,
     GradingDetail,
@@ -10,6 +10,9 @@ from Types import (
     Handedness,
     AngleDict,
 )
+
+serve_mean: Any = None
+serve_std: Any = None
 
 
 def serve_angle_grader(
@@ -20,39 +23,27 @@ def serve_angle_grader(
 ) -> float:
     logger = Logger("serve_angle_grader")
     logger.debug(f"Grading angle for joint: {joint_name}, frame: {frame_idx}")
-
-    # Use joint name and frame index to get the mean and std from the expert data
-    serve_mean = pd.read_excel(
-        "./stats/serve/expert angle stats.xlsx", sheet_name="mean"
-    ).set_index("Unnamed: 0")
-    serve_std = pd.read_excel(
-        "./stats/serve/expert angle stats.xlsx", sheet_name="std"
-    ).set_index("Unnamed: 0")
+    global serve_mean, serve_std
+    if serve_mean is None or serve_std is None:
+        serve_mean = pd.read_excel(
+            "./stats/serve/expert angle stats.xlsx", sheet_name="mean"
+        ).set_index("Unnamed: 0")
+        serve_std = pd.read_excel(
+            "./stats/serve/expert angle stats.xlsx", sheet_name="std"
+        ).set_index("Unnamed: 0")
     idx = joint_name, frame_idx
     mean = float(serve_mean.loc[idx])
     std = float(serve_std.loc[idx])
-    logger.debug(f"Expert data - mean: {mean}, std: {std}")
-
-    # Calculate the min and max angle based on the mean and std
     min_angle = mean - std
     max_angle = mean + std
-
-    # get current angle
     current_angle = angle_dict[joint_name]
-    logger.debug(f"Current angle: {current_angle}, range: [{min_angle}, {max_angle}]")
-
     if min_angle <= current_angle <= max_angle:
-        logger.info(f"Angle within range, full score: {angle_max_grade}")
         return angle_max_grade
     else:
         if min_angle > current_angle:
-            score = float(angle_max_grade) * (float(current_angle) / float(min_angle))
-            logger.warning(f"Angle below range, reduced score: {score}")
-            return score
+            return float(angle_max_grade) * (float(current_angle) / float(min_angle))
         else:
-            score = float(angle_max_grade) * (float(max_angle) / float(current_angle))
-            logger.warning(f"Angle above range, reduced score: {score}")
-            return score
+            return float(angle_max_grade) * (float(max_angle) / float(current_angle))
 
 
 class ServeGrader(Grader):
@@ -90,9 +81,6 @@ class ServeGrader(Grader):
         return f"Nose {str(self.handedness).capitalize()} Shoulder Elbow"
 
     def grade_checkpoint_1_arms(self, angle_dict: AngleDict) -> float:
-        """
-        The preparation phase of the serve. Full score for this checkpoint: 20
-        """
         if not angle_dict:
             return 0
         grade: float = 0.0
@@ -101,9 +89,6 @@ class ServeGrader(Grader):
         return grade
 
     def grade_checkpoint_1_legs(self, angle_dict: AngleDict) -> float:
-        """
-        The preparation phase of the serve. Full score for this checkpoint: 20
-        """
         if not angle_dict:
             return 0
         if angle_dict[self.dominant_crotch] <= angle_dict[self.non_dominant_crotch]:
@@ -113,9 +98,6 @@ class ServeGrader(Grader):
     def grade_checkpoint_2(
         self, angle_dict1: AngleDict, angle_dict2: AngleDict
     ) -> float:
-        """
-        Body weight transfer. Full score for this checkpoint: 20
-        """
         if not angle_dict1 or not angle_dict2:
             return 0
         grade: float = 0.0
@@ -129,9 +111,6 @@ class ServeGrader(Grader):
         return grade
 
     def grade_checkpoint_3(self, angle_dict: AngleDict) -> float:
-        """
-        Bottom rotation. Full score for this checkpoint: 20
-        """
         grade: float = 0.0
         if not angle_dict:
             return grade
@@ -140,9 +119,6 @@ class ServeGrader(Grader):
         return grade
 
     def grade_checkpoint_4(self, angle_dict: AngleDict) -> float:
-        """
-        Wrist flick. Full score for this checkpoint: 20
-        """
         grade: float = 0.0
         if not angle_dict:
             return grade
@@ -150,9 +126,6 @@ class ServeGrader(Grader):
         return grade
 
     def grade_checkpoint_5(self, angle: AngleDict) -> float:
-        """
-        Shoulder rotation. Full score for this checkpoint: 20
-        """
         grade: float = 0.0
         if not angle:
             return grade
@@ -160,40 +133,17 @@ class ServeGrader(Grader):
         grade += serve_angle_grader(10, self.dominant_shoulder_elbow, "check5", angle)
         return grade
 
-        # full score for this frame: 20
-
     def grade(self, grader_input: GraderInput) -> GraderResult:
-        self.logger.debug("Starting serve grading")
         if not isinstance(grader_input, list) or len(grader_input) < 5:
-            self.logger.error(
-                f"Invalid grader input: expected list with 5 elements, got {type(grader_input)} with length {len(grader_input) if isinstance(grader_input, list) else 'N/A'}"
-            )
             return EMPTY_GRADER_RESULT
-
-        self.logger.info(f"Grading serve for {self.handedness} handed player")
-
-        # full score for this: 100
         angle_list: list[AngleDict] = grader_input
-
-        self.logger.debug("Evaluating checkpoint 1 - arms position")
         check1_arms = self.grade_checkpoint_1_arms(angle_list[0])
-        self.logger.debug("Evaluating checkpoint 1 - leg position")
         check1_legs = self.grade_checkpoint_1_legs(angle_list[0])
-        self.logger.debug("Evaluating checkpoint 2 - weight transfer")
         check2 = self.grade_checkpoint_2(angle_list[0], angle_list[1])
-        self.logger.debug("Evaluating checkpoint 3 - hip rotation")
         check3 = self.grade_checkpoint_3(angle_list[2])
-        self.logger.debug("Evaluating checkpoint 4 - wrist flick")
         check4 = self.grade_checkpoint_4(angle_list[3])
-        self.logger.debug("Evaluating checkpoint 5 - shoulder rotation")
         check5 = self.grade_checkpoint_5(angle_list[4])
-
         total = check1_arms + check1_legs + check2 + check3 + check4 + check5
-        self.logger.info(f"Serve grading completed. Total score: {total}/100")
-        self.logger.debug(
-            f"Individual scores - Arms: {check1_arms}, Legs: {check1_legs}, Transfer: {check2}, Hip: {check3}, Wrist: {check4}, Shoulder: {check5}"
-        )
-
         grading_details: list[GradingDetail] = [
             {"description": "雙手平舉", "grade": check1_arms},
             {"description": "將重心放至持拍腳", "grade": check1_legs},
@@ -202,8 +152,10 @@ class ServeGrader(Grader):
             {"description": "持拍手手腕發力", "grade": check4},
             {"description": "肩膀旋轉朝前", "grade": check5},
         ]
-
         return {
             "grading_details": grading_details,
             "total_grade": total,
         }
+
+__all__ = ["ServeGrader", "serve_angle_grader", "serve_mean", "serve_std"]
+

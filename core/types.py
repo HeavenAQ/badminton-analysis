@@ -1,8 +1,7 @@
 from enum import IntEnum
-from typing import Any, Dict, List, Tuple, TypedDict, TypeAlias
+from typing import Any, Dict, List, TypedDict, TypeAlias
 
 import numpy as np
-from numpy import floating
 from numpy.typing import NDArray
 
 
@@ -51,15 +50,12 @@ class Handedness(IntEnum):
         return self.name.lower()
 
 
-# Body Coordinate System
 class BodyCoordinateSystem(TypedDict):
     origin: NDArray[np.float64]
     x_axis: NDArray[np.float64]
     y_axis: NDArray[np.float64]
 
 
-# body coordinates and angles (standardized to NumPy arrays)
-# Note: Shapes are documented but not enforced at type level.
 Coordinate: TypeAlias = NDArray[np.float64]  # shape (2,)
 Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, 2)
 CoordinateDict = Dict[COCOKeypoints, Coordinate]
@@ -68,7 +64,6 @@ AngleDict = Dict[str, float] | None
 AngleDicts = List[AngleDict]
 
 
-# Types reated to Graders
 GraderInput = AngleDicts | CoordinatesDict
 
 
@@ -86,3 +81,13 @@ class VideoAnalysisResponse(TypedDict):
     grade: GraderResult
     used_angles_data: list[dict[str, float] | None]
     processed_video: str
+
+
+class TrackingData(TypedDict):
+    frames: List[np.ndarray]
+    original_landmarks: List[CoordinateDict | None]
+    normalized_landmarks: List[CoordinateDict | None]
+    hand_positions: List[Coordinate]
+    elbow_positions: List[Coordinate]
+    time_intervals: List[float]
+

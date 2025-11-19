@@ -1,5 +1,5 @@
 import pytest
-from Types import COCOKeypoints, Skill, Handedness
+from core.types import COCOKeypoints, Skill, Handedness
 
 
 class TestCOCOKeypoints:

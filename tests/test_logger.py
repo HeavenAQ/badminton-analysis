@@ -1,7 +1,7 @@
 import pytest
 import logging
 from unittest.mock import patch, MagicMock
-from Logger import Logger, log_with_frame_info
+from core.logger import Logger, log_with_frame_info
 
 
 class TestLogger:

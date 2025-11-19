@@ -1,6 +1,6 @@
 import pytest
-from Joints import JOINTS, SKELETON_CONNECTIONS
-from Types import COCOKeypoints
+from core.joints import JOINTS, SKELETON_CONNECTIONS
+from core.types import COCOKeypoints
 
 
 class TestJoints:
