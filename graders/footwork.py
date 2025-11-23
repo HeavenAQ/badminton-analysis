@@ -98,4 +98,3 @@ class BackCourtFootworkGrader(Grader):
     def grade(self, grader_input: GraderInput) -> GraderResult:
         # Placeholder
         return EMPTY_GRADER_RESULT
-

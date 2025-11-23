@@ -23,28 +23,55 @@ help:
 	@echo "  clean     - Remove caches and generated videos"
 
 install:
-	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -r requirements.txt
+	@if command -v uv >/dev/null 2>&1; then \
+		echo "Using uv to sync project (prod + dev)"; \
+		uv sync --all-extras --dev; \
+	else \
+		echo "uv not found; falling back to pip + requirements.txt"; \
+		$(PY) -m pip install --upgrade pip; \
+		$(PY) -m pip install -r requirements.txt; \
+	fi
 
 type:
-	$(MYPY) . --config-file mypy.ini --pretty
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run -m mypy . --config-file mypy.ini --pretty; \
+	else \
+		$(MYPY) . --config-file mypy.ini --pretty; \
+	fi
 
 test:
-	$(PYTEST) -q
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run -m pytest -q; \
+	else \
+		$(PYTEST) -q; \
+	fi
 
 test-v:
-	$(PYTEST) -vvv
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run -m pytest -vvv; \
+	else \
+		$(PYTEST) -vvv; \
+	fi
 
 test-all: type test
 
 ci: test-all
 
+
 video:
-	$(PY) main.py $(VIDEO) --output $(OUTPUT)
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run main.py $(VIDEO) --output $(OUTPUT); \
+	else \
+		$(PY) main.py $(VIDEO) --output $(OUTPUT); \
+	fi
 	@echo "Saved analyzed video to: $(OUTPUT)"
 
 batch:
-	$(PY) -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+	else \
+		$(PY) -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+	fi
 
 clean:
 	rm -rf __pycache__ .pytest_cache stats

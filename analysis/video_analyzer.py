@@ -1,20 +1,17 @@
-from typing import Optional, Tuple, Literal
+from typing import Any, Optional, Tuple, Literal
 
 import numpy as np
+from numpy.typing import NDArray
 
 from core.logger import Logger
 from core.joints import JOINTS
 from core.types import (
     Coordinate,
     CoordinateDict,
-    GraderResult,
-    Handedness,
-    Skill,
 )
 from pose import PoseDetector
 from video.constants import (
     SMOOTHING_WINDOW_SIZE,
-    PEAK_ACCELERATION_OFFSET,
     IMPACT_FRAME_SEARCH_WINDOW_BEFORE,
     IMPACT_FRAME_SEARCH_WINDOW_AFTER,
     ANALYSIS_WINDOW_PADDING_BEFORE,
@@ -26,10 +23,10 @@ class VideoAnalyzer:
 
     @staticmethod
     def moving_average(
-        positions: np.ndarray | list[Coordinate],
+        positions: NDArray[np.floating[Any]] | list[Coordinate],
         window_size: int = 5,
         pad_mode: Literal["edge"] | Literal["reflect"] = "edge",
-    ) -> np.ndarray:
+    ) -> NDArray[np.floating[Any]]:
         pos = np.asarray(positions, dtype=np.float64)
         if pos.ndim != 2 or pos.shape[1] != 2:
             raise ValueError("positions must have shape (N, 2)")
@@ -43,20 +40,20 @@ class VideoAnalyzer:
 
     @staticmethod
     def calculate_velocity(
-        positions: np.ndarray | list[Coordinate],
+        positions: NDArray[np.floating[Any]] | list[Coordinate],
         dt: float,
         n: int = 1,
-    ) -> np.ndarray:
+    ) -> NDArray[np.floating[Any]]:
         positions = np.asarray(positions, dtype=np.float64)
         pos_shift = positions[n:] - positions[:-n]
         return 10.0 * (np.linalg.norm(pos_shift, axis=1) / (n * dt))
 
     @staticmethod
     def calculate_acceleration(
-        velocities: np.ndarray,
+        velocities: NDArray[np.floating[Any]],
         dt: float,
         n: int = 1,
-    ) -> np.ndarray:
+    ) -> NDArray[np.floating[Any]]:
         return 10.0 * (np.diff(velocities) / (n * dt))
 
     @staticmethod
@@ -70,18 +67,24 @@ class VideoAnalyzer:
         accelerations = VideoAnalyzer.calculate_acceleration(velocities, 1, 1)
         peak_frame = int(np.argmax(accelerations)) + 2 if accelerations.size > 0 else 0
         start_frame = max(0, peak_frame - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
-        end_frame = min(len(hand_positions) - 1, peak_frame + IMPACT_FRAME_SEARCH_WINDOW_AFTER)
+        end_frame = min(
+            len(hand_positions) - 1, peak_frame + IMPACT_FRAME_SEARCH_WINDOW_AFTER
+        )
         return start_frame, peak_frame, end_frame
 
     @staticmethod
     def find_smash_analysis_window(
         hand_positions: list[Coordinate],
     ) -> Tuple[int, int, int]:
-        start_frame, _, end_frame = VideoAnalyzer.find_acc_analysis_window(hand_positions)
+        start_frame, _, end_frame = VideoAnalyzer.find_acc_analysis_window(
+            hand_positions
+        )
         idx = np.argmin(np.asarray(hand_positions)[start_frame:end_frame, 1])
         new_peak = int(idx + start_frame)
         new_start = max(0, new_peak - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
-        new_end = min(len(hand_positions) - 1, new_peak + IMPACT_FRAME_SEARCH_WINDOW_AFTER)
+        new_end = min(
+            len(hand_positions) - 1, new_peak + IMPACT_FRAME_SEARCH_WINDOW_AFTER
+        )
         return new_start, new_peak, new_end
 
     @staticmethod
@@ -100,8 +103,12 @@ class VideoAnalyzer:
             peak_frame = start_frame + lowest_hand_relative_index
         subset_elbow_pos = elbow_positions[peak_frame:]
         arr_elbow = np.asarray(subset_elbow_pos, dtype=np.float64)
-        composite_metric = arr_elbow[:, 0] - arr_elbow[:, 1] if arr_elbow.size > 0 else np.array([])
-        relative_end_index = int(np.argmax(composite_metric)) if composite_metric.size > 0 else 0
+        composite_metric = (
+            arr_elbow[:, 0] - arr_elbow[:, 1] if arr_elbow.size > 0 else np.array([])
+        )
+        relative_end_index = (
+            int(np.argmax(composite_metric)) if composite_metric.size > 0 else 0
+        )
         end_frame = int(peak_frame) + int(relative_end_index)
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
         final_end_frame = min(len(hand_positions), end_frame)
@@ -113,7 +120,10 @@ class VideoAnalyzer:
         normalized_landmarks: list[CoordinateDict | None],
         pose_detector: PoseDetector | None = None,
     ) -> Optional[dict[str, float]]:
-        if frame_index >= len(normalized_landmarks) or not normalized_landmarks[frame_index]:
+        if (
+            frame_index >= len(normalized_landmarks)
+            or not normalized_landmarks[frame_index]
+        ):
             return None
         landmarks = normalized_landmarks[frame_index]
         assert landmarks is not None
@@ -127,4 +137,3 @@ class VideoAnalyzer:
                 if angle is not None and isinstance(angle, float):
                     angles[joint_name] = angle
         return angles
-

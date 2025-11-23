@@ -27,12 +27,12 @@ def log_with_frame_info(log_method: F) -> F:
         finally:
             del frame
 
-    return wrapper  # type: ignore[return-value]
+    return wrapper  # type: ignore[reportReturnType]
 
 
 class Logger:
     def __init__(self, name: str) -> None:
-        self.logger = logging.getLogger(name)
+        self.logger: logging.Logger = logging.getLogger(name)
         self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
@@ -62,4 +62,3 @@ class Logger:
     @log_with_frame_info
     def critical(self, message: str) -> None:
         self.logger.critical(message)
-

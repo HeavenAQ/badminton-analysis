@@ -28,6 +28,18 @@ Sample for running locally: `test.mp4` at the repo root.
 
 ## Usage
 
+### With uv (recommended)
+
+- Sync dependencies (project + dev): `uv sync --dev`
+- Run tests: `uv run -m pytest -q`
+- Type check: `uv run -m mypy . --config-file mypy.ini`
+- Live analysis: `uv run main.py test.mp4 --output analyzed.mp4`
+- Batch analyze: `uv run -m tools.analyze --input training_videos --output stats`
+
+Notes:
+- Default dependency is `opencv-python-headless`. For GUI windows, install extras: `uv pip install .[gui]` or `uv add '.[gui]'`.
+- Dev tools are also available as extras: `uv add '.[dev]'`.
+
 Run live analysis with overlayed skeleton and angle arcs:
 
 ```

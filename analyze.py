@@ -151,4 +151,3 @@ if __name__ == "__main__":
     input_dir = "./training_videos/left/右前/"
     output_dir = "./stats/left/右前/"
     process_videos_in_dir(input_dir, output_dir)
-

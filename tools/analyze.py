@@ -1,10 +1,10 @@
+from ast import Dict
 import os
 import cv2
 import time
 import json
 import argparse
 import threading
-from typing import Tuple
 from cv2.typing import MatLike
 from pose import PoseDetector
 from core.types import COCOKeypoints
@@ -23,9 +23,9 @@ def process_video(video_path: str, output_dir: str) -> None:
     timestamp_queue: Queue[float] = Queue()
     time_intervals: list[float] = []
     frames: list[MatLike] = []
-    normalized_landmarks_list: list[dict | None] = []
-    hand_positions: list[Tuple[float, float]] = []
-    elbow_positions: list[Tuple[float, float]] = []
+    normalized_landmarks_list: list[Dict | None] = []
+    hand_positions: list[tuple[float, float]] = []
+    elbow_positions: list[tuple[float, float]] = []
 
     def frame_capture() -> None:
         prev_time = time.perf_counter()

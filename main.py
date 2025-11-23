@@ -1,21 +1,17 @@
-"""
-Main script for badminton pose analysis with skeleton and angle visualization.
-Keeps the root entrypoint while core code lives in organized subpackages.
-"""
-
 import argparse
 import os
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import numpy as np
+from numpy.typing import NDArray
 
-from pose import PoseDetector
-from normalization import BodyCentricNormalizer
-from core.types import Skill, Handedness
 from core.joints import JOINTS
 from core.logger import Logger
+from core.types import Handedness, Skill
+from normalization import BodyCentricNormalizer
+from pose import PoseDetector
 
 
 class LiveVideoAnalyzer:
@@ -95,7 +91,7 @@ class LiveVideoAnalyzer:
         self.logger.info("Video analysis completed")
 
     def process_frame(
-        self, frame: np.ndarray, frame_num: int, total_frames: int
+        self, frame: NDArray[np.floating[Any]], frame_num: int, total_frames: int
     ) -> np.ndarray:
         display_frame = frame.copy()
 

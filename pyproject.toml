@@ -1,0 +1,36 @@
+[project]
+name = "badminton-analysis"
+version = "0.1.0"
+description = "Pose detection, normalization, and graders for badminton analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==1.26.4",
+    # Prefer headless OpenCV by default; use the 'gui' extra for display backends
+    "opencv-python-headless==4.10.0.84",
+    "pillow==10.4.0",
+    "pandas==2.2.3",
+    "openpyxl==3.1.5",
+    "ultralytics==8.3.27",
+    # Explicit torch deps for ultralytics/YOLO
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.3", "mypy==1.18.2", "typing_extensions==4.12.2"]
+gui = [
+    # Install these to use OpenCV highgui windows; don't mix with headless
+    "opencv-python==4.10.0.84",
+    "opencv-contrib-python==4.10.0.84",
+]
+
+[project.scripts]
+badminton-live = "main:main"
+analyze-batch = "tools.analyze:main"
+
+[dependency-groups]
+dev = ["pytest == 8.3.3", "mypy== 1.18.2"]
+
+[tool.basedpyright]
+reportExplicitAny = false
