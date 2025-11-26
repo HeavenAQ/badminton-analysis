@@ -1,24 +1,24 @@
-from dataclasses import dataclass
 from collections import deque
-from typing import Any, Dict, Optional, Tuple, Type, TypedDict
+from dataclasses import dataclass
+from typing import TypedDict, final, override
+
 import numpy as np
-from numpy.typing import NDArray
-from .base import EMPTY_GRADER_RESULT, Grader
+
 from core.types import (
     COCOKeypoints,
     Coordinate,
-    CoordinateDict,
-    CoordinatesDict,
     GraderInput,
     GraderResult,
     Handedness,
 )
 
+from .base import EMPTY_GRADER_RESULT, Grader
 
 _EPS = 1e-10
 
 
-class ToleranceDict(TypedDict):
+@dataclass
+class PositionTolerance:
     contact: float
     behind_margin: float
     back_move: float
@@ -34,6 +34,7 @@ class FootworkGrade:
     check6: float = 0
 
 
+@final
 class BackCourtFootworkGrader(Grader):
     ORIGIN_TOLERANCE_RATE = 0.35
     ORIGIN_FRAME = 5
@@ -79,22 +80,23 @@ class BackCourtFootworkGrader(Grader):
     def _coord_dist(a: Coordinate, b: Coordinate) -> float:
         return float(np.linalg.norm(a - b))
 
-    def _tols(self, LHIP: Coordinate, RHIP: Coordinate) -> ToleranceDict:
+    def _tols(self, LHIP: Coordinate, RHIP: Coordinate) -> PositionTolerance:
         s = self._body_scale(LHIP, RHIP)
-        return {
-            "contact": 0.35 * s,
-            "behind_margin": 0.25 * s,
-            "back_move": 0.30 * s,
-        }
+        return PositionTolerance(
+            contact=0.35 * s,
+            behind_margin=0.25 * s,
+            back_move=0.30 * s,
+        )
 
     @property
-    def feet(self) -> Tuple[COCOKeypoints, COCOKeypoints]:
+    def feet(self) -> tuple[COCOKeypoints, COCOKeypoints]:
         keypoint_map = {
             Handedness.RIGHT: (COCOKeypoints.RIGHT_ANKLE, COCOKeypoints.LEFT_ANKLE),
             Handedness.LEFT: (COCOKeypoints.LEFT_ANKLE, COCOKeypoints.RIGHT_ANKLE),
         }
         return keypoint_map[self.handedness]
 
+    @override
     def grade(self, grader_input: GraderInput) -> GraderResult:
         # Placeholder
         return EMPTY_GRADER_RESULT

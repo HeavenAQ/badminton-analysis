@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, override
 import pandas as pd
 from .base import Grader, EMPTY_GRADER_RESULT
 from core.logger import Logger
@@ -133,6 +133,7 @@ class ServeGrader(Grader):
         grade += serve_angle_grader(10, self.dominant_shoulder_elbow, "check5", angle)
         return grade
 
+    @override
     def grade(self, grader_input: GraderInput) -> GraderResult:
         if not isinstance(grader_input, list) or len(grader_input) < 5:
             return EMPTY_GRADER_RESULT
@@ -157,5 +158,5 @@ class ServeGrader(Grader):
             "total_grade": total,
         }
 
-__all__ = ["ServeGrader", "serve_angle_grader", "serve_mean", "serve_std"]
 
+__all__ = ["ServeGrader", "serve_angle_grader", "serve_mean", "serve_std"]

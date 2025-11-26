@@ -39,6 +39,7 @@ Sample for running locally: `test.mp4` at the repo root.
 Notes:
 - Default dependency is `opencv-python-headless`. For GUI windows, install extras: `uv pip install .[gui]` or `uv add '.[gui]'`.
 - Dev tools are also available as extras: `uv add '.[dev]'`.
+- If you see a uv warning about an active virtual environment, simply deactivate any venv you’ve previously activated (`deactivate`) and rerun. uv manages the project’s `.venv` automatically, and the Makefile clears `VIRTUAL_ENV`/`CONDA_PREFIX` for uv commands to avoid this warning.
 
 Run live analysis with overlayed skeleton and angle arcs:
 

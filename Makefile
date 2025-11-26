@@ -2,6 +2,10 @@ PY ?= python
 PYTEST ?= pytest
 MYPY ?= mypy
 
+# Ensure uv doesn't inherit an already-activated venv (which triggers warnings)
+# We clear VIRTUAL_ENV/CONDA_PREFIX for any uv subprocesses.
+UV ?= VIRTUAL_ENV= CONDA_PREFIX= uv
+
 # Video demo parameters (can be overridden: `make video VIDEO=your.mp4 OUTPUT=out.mp4`)
 VIDEO ?= test.mp4
 OUTPUT ?= analyzed.mp4
@@ -25,7 +29,7 @@ help:
 install:
 	@if command -v uv >/dev/null 2>&1; then \
 		echo "Using uv to sync project (prod + dev)"; \
-		uv sync --all-extras --dev; \
+		$(UV) sync --all-extras --dev; \
 	else \
 		echo "uv not found; falling back to pip + requirements.txt"; \
 		$(PY) -m pip install --upgrade pip; \
@@ -34,21 +38,21 @@ install:
 
 type:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run -m mypy . --config-file mypy.ini --pretty; \
+		$(UV) run -m mypy . --config-file mypy.ini --pretty; \
 	else \
 		$(MYPY) . --config-file mypy.ini --pretty; \
 	fi
 
 test:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run -m pytest -q; \
+		$(UV) run -m pytest -q; \
 	else \
 		$(PYTEST) -q; \
 	fi
 
 test-v:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run -m pytest -vvv; \
+		$(UV) run -m pytest -vvv; \
 	else \
 		$(PYTEST) -vvv; \
 	fi
@@ -60,7 +64,7 @@ ci: test-all
 
 video:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run main.py $(VIDEO) --output $(OUTPUT); \
+		$(UV) run main.py $(VIDEO) --output $(OUTPUT); \
 	else \
 		$(PY) main.py $(VIDEO) --output $(OUTPUT); \
 	fi
@@ -68,7 +72,7 @@ video:
 
 batch:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+		$(UV) run -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
 	else \
 		$(PY) -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
 	fi

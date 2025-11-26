@@ -4,7 +4,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock, mock_open
 from processing import VideoProcessor
 from analysis import VideoAnalyzer
-from grading import PlayerGrader
+from graders import PlayerGrader
 from core.types import CoordinateDict, Coordinates, Skill, Handedness, TrackingData
 
 
