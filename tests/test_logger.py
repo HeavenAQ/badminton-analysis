@@ -1,7 +1,7 @@
 import pytest
 import logging
 from unittest.mock import patch, MagicMock
-from core.logger import Logger, log_with_frame_info
+from badminton_analysis.core.logger import Logger, log_with_frame_info
 
 
 class TestLogger:
@@ -22,9 +22,11 @@ class TestLogger:
     def test_logger_handler_setup(self, mock_handler):
         mock_handler_instance = MagicMock()
         mock_handler.return_value = mock_handler_instance
-        
-        logger = Logger("test_logger")
-        
+
+        logger_name = "test_logger_handler_setup"
+        logging.getLogger(logger_name).handlers.clear()
+        logger = Logger(logger_name)
+
         mock_handler.assert_called_once()
         mock_handler_instance.setFormatter.assert_called_once()
 

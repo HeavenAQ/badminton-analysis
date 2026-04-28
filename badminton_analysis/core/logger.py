@@ -1,7 +1,7 @@
 import logging
 import inspect
 from functools import wraps
-from typing import Any, TypeVar, Protocol
+from typing import Any, TypeVar, Protocol, cast
 
 
 class _LogMethod(Protocol):
@@ -27,21 +27,23 @@ def log_with_frame_info(log_method: F) -> F:
         finally:
             del frame
 
-    return wrapper  # type: ignore[reportReturnType]
+    return cast(F, wrapper)
 
 
 class Logger:
     def __init__(self, name: str) -> None:
         self.logger: logging.Logger = logging.getLogger(name)
         self.logger.setLevel(logging.DEBUG)
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            "{asctime} - {levelname} - {message}",
-            style="{",
-            datefmt="%Y-%m-%d %H:%M",
-        )
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        self.logger.propagate = False
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "{asctime} - {levelname} - {message}",
+                style="{",
+                datefmt="%Y-%m-%d %H:%M",
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
 
     @log_with_frame_info
     def debug(self, message: str) -> None:

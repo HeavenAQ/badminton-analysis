@@ -1,15 +1,16 @@
 import pytest
 import numpy as np
+import torch
 from unittest.mock import patch, MagicMock, PropertyMock
-from pose import PoseDetector
-from core.types import COCOKeypoints
+from badminton_analysis.services.pose_detector import PoseDetector
+from badminton_analysis.models.types import COCOKeypoints
 
 
 class TestPoseDetector:
     def setup_method(self, method):
-        with patch("pose.detector.YOLO") as mock_yolo:
+        with patch("badminton_analysis.services.pose_detector.YOLO") as mock_yolo:
             mock_yolo.return_value = MagicMock()
-            with patch("core.logger.Logger") as mock_logger:  # Mock the Logger
+            with patch("badminton_analysis.core.logger.Logger") as mock_logger:  # Mock the Logger
                 mock_logger.return_value.info = MagicMock()  # Mock the info method
                 self.detector = PoseDetector()
 
@@ -55,8 +56,8 @@ class TestPoseDetector:
         angle = self.detector.compute_angle(point_a, point_b, point_c)
         assert angle is None
 
-    @patch("pose.detector.cv2.line")
-    @patch("pose.detector.cv2.circle")
+    @patch("badminton_analysis.services.pose_detector.cv2.line")
+    @patch("badminton_analysis.services.pose_detector.cv2.circle")
     def test_show_pose_with_valid_landmarks(self, mock_circle, mock_line):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
         landmarks = {
@@ -95,31 +96,27 @@ class TestPoseDetector:
 
     def test_get_pose_method(self):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        with patch.object(self.detector.model, 'predict') as mock_predict:
-            mock_predict.return_value = "mock_results"
-            
+
+        with patch.object(self.detector.model, "track") as mock_track:
+            mock_track.return_value = "mock_results"
+
             result = self.detector.get_pose(img)
-            
-            mock_predict.assert_called_once_with(img, conf=0.5)
+
+            mock_track.assert_called_once_with(
+                img, conf=0.5, persist=True, verbose=False
+            )
             assert result == "mock_results"
 
     def test_get_2d_landmarks_with_keypoints(self):
         mock_results = MagicMock()
-        mock_keypoints = MagicMock()
-
-        # Create mock tensor-like objects with .cpu() method
-        mock_xy_tensor = MagicMock()
-        mock_xy_tensor.cpu.return_value.numpy.return_value = np.array(
-            [[100, 200], [150, 250]]
+        mock_results.boxes = MagicMock()
+        mock_results.boxes.__len__.return_value = 1
+        mock_results.boxes.xywhn = torch.tensor([[0.5, 0.5, 0.2, 0.2]])
+        mock_results.boxes.id = None
+        mock_results.keypoints = MagicMock()
+        mock_results.keypoints.data = torch.tensor(
+            [[[100.0, 200.0, 0.9], [150.0, 250.0, 0.8]]]
         )
-
-        mock_conf_tensor = MagicMock()
-        mock_conf_tensor.cpu.return_value.numpy.return_value = np.array([0.9, 0.8])
-
-        mock_keypoints.xy = [mock_xy_tensor]
-        mock_keypoints.conf = [mock_conf_tensor]
-        mock_results.keypoints = mock_keypoints
 
         results = [mock_results]
         landmarks = self.detector.get_2d_landmarks(results)
@@ -127,7 +124,7 @@ class TestPoseDetector:
         assert isinstance(landmarks, dict)
         assert len(landmarks) == 2
 
-    @patch("pose.detector.cv2.ellipse")
+    @patch("badminton_analysis.services.pose_detector.cv2.ellipse")
     @patch.object(PoseDetector, "_PoseDetector__add_text_with_pillow")
     def test_show_angle_arc(self, mock_add_text, mock_ellipse):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -141,9 +138,9 @@ class TestPoseDetector:
         mock_ellipse.assert_called_once()
         mock_add_text.assert_called_once()
 
-    @patch("pose.detector.Image.fromarray")
-    @patch("pose.detector.cv2.cvtColor")
-    @patch("pose.detector.np.copyto")
+    @patch("badminton_analysis.services.pose_detector.Image.fromarray")
+    @patch("badminton_analysis.services.pose_detector.cv2.cvtColor")
+    @patch("badminton_analysis.services.pose_detector.np.copyto")
     def test_add_text_with_pillow(self, mock_copyto, mock_cvtcolor, mock_from_array):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
         text = "Test°"
@@ -153,8 +150,8 @@ class TestPoseDetector:
         mock_draw = MagicMock()
         mock_from_array.return_value = mock_pil_image
         
-        with patch("pose.detector.ImageDraw.Draw", return_value=mock_draw):
-            with patch("pose.detector.ImageFont.load_default") as mock_font:
+        with patch("badminton_analysis.services.pose_detector.ImageDraw.Draw", return_value=mock_draw):
+            with patch("badminton_analysis.services.pose_detector.ImageFont.load_default") as mock_font:
                 mock_font.return_value = "mock_font"
                 
                 # Access the private method for testing

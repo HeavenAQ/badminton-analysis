@@ -2,9 +2,9 @@ import json
 import numpy as np
 from pathlib import Path
 
-from tools.analyze import save_angles_to_json, pose_detector
-from analysis import VideoAnalyzer
-from core.types import COCOKeypoints
+from badminton_analysis.tools.analyze import save_angles_to_json, pose_detector
+from badminton_analysis.services.video_analyzer import VideoAnalyzer
+from badminton_analysis.models.types import COCOKeypoints
 
 
 def _make_landmarks() -> dict:
@@ -27,7 +27,7 @@ def test_save_angles_to_json(tmp_path: Path):
     # Key frames map to indices 0..4 below
     save_angles_to_json(
         normalized_landmarks,
-        (0, 2, 4, 6, 8),
+        (0, 1, 2, 3, 4),
         output_dir=str(output_dir),
         video_name=video_name,
         analyzer=analyzer,

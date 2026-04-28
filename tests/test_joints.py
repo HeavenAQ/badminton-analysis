@@ -1,6 +1,6 @@
 import pytest
-from core.joints import JOINTS, SKELETON_CONNECTIONS
-from core.types import COCOKeypoints
+from badminton_analysis.models.joints import JOINTS, SKELETON_CONNECTIONS
+from badminton_analysis.models.types import COCOKeypoints
 
 
 class TestJoints:
@@ -10,8 +10,8 @@ class TestJoints:
 
     def test_joints_contain_required_angles(self):
         required_joints = [
-            "Left Elbow", "Right Elbow", "Left Knee", "Right Knee",
-            "Left Shoulder", "Right Shoulder", "Left Crotch", "Right Crotch"
+            "Left Elbow Angle", "Right Elbow Angle", "Left Knee Angle", "Right Knee Angle",
+            "Left Shoulder Angle", "Right Shoulder Angle", "Left Crotch Angle", "Right Crotch Angle"
         ]
         for joint in required_joints:
             assert joint in JOINTS
@@ -24,12 +24,12 @@ class TestJoints:
                 assert isinstance(keypoint, COCOKeypoints)
 
     def test_specific_joint_definitions(self):
-        assert JOINTS["Left Elbow"] == (
+        assert JOINTS["Left Elbow Angle"] == (
             COCOKeypoints.LEFT_SHOULDER,
             COCOKeypoints.LEFT_ELBOW,
             COCOKeypoints.LEFT_WRIST,
         )
-        assert JOINTS["Right Shoulder"] == (
+        assert JOINTS["Right Shoulder Angle"] == (
             COCOKeypoints.RIGHT_HIP,
             COCOKeypoints.RIGHT_SHOULDER,
             COCOKeypoints.RIGHT_ELBOW,

@@ -6,13 +6,15 @@ MYPY ?= mypy
 # We clear VIRTUAL_ENV/CONDA_PREFIX for any uv subprocesses.
 UV ?= VIRTUAL_ENV= CONDA_PREFIX= uv
 
-# Video demo parameters (can be overridden: `make video VIDEO=your.mp4 OUTPUT=out.mp4`)
-VIDEO ?= test.mp4
-OUTPUT ?= analyzed.mp4
 BATCH_INPUT ?= training_videos
 BATCH_OUTPUT ?= stats
+GRADE_INPUT ?= training_videos
+GRADE_OUTPUT ?= grading_results
+GRADE_HANDEDNESS ?= right
+GRADE_SKILL ?= serve
+FOOTWORK_REFERENCE ?=
 
-.PHONY: help install type test test-v test-all video batch clean ci
+.PHONY: help install type test test-v test-all batch grade clean ci
 
 help:
 	@echo "Targets:"
@@ -21,8 +23,8 @@ help:
 	@echo "  test      - Run test suite (quiet)"
 	@echo "  test-v    - Run test suite (verbose)"
 	@echo "  test-all  - Run type checks, then tests"
-	@echo "  video     - Generate analyzed video from $(VIDEO) -> $(OUTPUT)"
 	@echo "  batch     - Batch analyze a directory of videos (BATCH_INPUT -> BATCH_OUTPUT)"
+	@echo "  grade     - Grade student videos (GRADE_INPUT -> GRADE_OUTPUT)"
 	@echo "  ci        - Same as test-all (convenience for local CI run)"
 	@echo "  clean     - Remove caches and generated videos"
 
@@ -62,22 +64,22 @@ test-all: type test
 ci: test-all
 
 
-video:
-	@if command -v uv >/dev/null 2>&1; then \
-		$(UV) run main.py $(VIDEO) --output $(OUTPUT); \
-	else \
-		$(PY) main.py $(VIDEO) --output $(OUTPUT); \
-	fi
-	@echo "Saved analyzed video to: $(OUTPUT)"
-
 batch:
 	@if command -v uv >/dev/null 2>&1; then \
-		$(UV) run -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+		$(UV) run -m badminton_analysis.tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
 	else \
-		$(PY) -m tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+		$(PY) -m badminton_analysis.tools.analyze --input "$(BATCH_INPUT)" --output "$(BATCH_OUTPUT)"; \
+	fi
+
+grade:
+	@if command -v uv >/dev/null 2>&1; then \
+		$(UV) run -m badminton_analysis.tools.grade_students --input-dir "$(GRADE_INPUT)" --output-dir "$(GRADE_OUTPUT)" --handedness "$(GRADE_HANDEDNESS)" --skill "$(GRADE_SKILL)" $(if $(FOOTWORK_REFERENCE),--reference-data "$(FOOTWORK_REFERENCE)"); \
+	else \
+		$(PY) -m badminton_analysis.tools.grade_students --input-dir "$(GRADE_INPUT)" --output-dir "$(GRADE_OUTPUT)" --handedness "$(GRADE_HANDEDNESS)" --skill "$(GRADE_SKILL)" $(if $(FOOTWORK_REFERENCE),--reference-data "$(FOOTWORK_REFERENCE)"); \
 	fi
 
 clean:
 	rm -rf __pycache__ .pytest_cache stats
-	rm -f segment.mp4 $(OUTPUT) analyzed.mp4
+	rm -rf grading_results
+	rm -f segment.mp4
 	@echo "Cleaned build artifacts and videos"

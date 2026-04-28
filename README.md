@@ -1,6 +1,6 @@
 # Badminton Analysis Module
 
-Pose detection, body‑centric normalization, and joint‑angle visualization for badminton analysis. Includes a test suite and foundations for skill/footwork graders.
+Pose detection, body-centric normalization, batch angle extraction, and skill grading for badminton analysis.
 
 ## Current Progress
 
@@ -19,12 +19,10 @@ Highlights distilled from recent git history and code state:
 
 Functional status right now:
 
-- Live skeleton + angle visualization via `main.py` (OpenCV UI, optional output video).
-- Body‑centric normalization available via `Normalizer.py` and covered by tests.
-- Core modules in place: `PoseModule.py`, `VideoProcessor.py`, `Grader*.py`, `Logger.py`.
-- Initial grader scaffolding for skills (e.g., serve) and footwork.
-
-Sample for running locally: `test.mp4` at the repo root.
+- Body-centric normalization is implemented and covered by tests.
+- Batch angle extraction is available via `analyze-batch`.
+- Student grading is available via `grade-students`.
+- Skill graders are implemented for serve, smash, drive, net kill, and footwork.
 
 ## Usage
 
@@ -33,21 +31,29 @@ Sample for running locally: `test.mp4` at the repo root.
 - Sync dependencies (project + dev): `uv sync --dev`
 - Run tests: `uv run -m pytest -q`
 - Type check: `uv run -m mypy . --config-file mypy.ini`
-- Live analysis: `uv run main.py test.mp4 --output analyzed.mp4`
-- Batch analyze: `uv run -m tools.analyze --input training_videos --output stats`
+- Batch analyze: `uv run -m badminton_analysis.tools.analyze --input training_videos --output stats`
+- Grade students: `uv run -m badminton_analysis.tools.grade_students --handedness right --skill serve --input-dir student_videos --output-dir grading_results`
+- Grade footwork: `uv run -m badminton_analysis.tools.grade_students --handedness right --skill footwork --input-dir student_videos --output-dir grading_results --reference-data footwork_reference.json`
 
 Notes:
 - Default dependency is `opencv-python-headless`. For GUI windows, install extras: `uv pip install .[gui]` or `uv add '.[gui]'`.
 - Dev tools are also available as extras: `uv add '.[dev]'`.
 - If you see a uv warning about an active virtual environment, simply deactivate any venv you’ve previously activated (`deactivate`) and rerun. uv manages the project’s `.venv` automatically, and the Makefile clears `VIRTUAL_ENV`/`CONDA_PREFIX` for uv commands to avoid this warning.
 
-Run live analysis with overlayed skeleton and angle arcs:
+Footwork reference JSON format:
 
+```json
+{
+  "right": {
+    "left_ankle": [[0.0, 0.0], [0.2, 0.1]],
+    "right_ankle": [[0.0, 0.0], [0.3, 0.0]]
+  },
+  "left": {
+    "left_ankle": [[0.0, 0.0], [0.1, 0.2]],
+    "right_ankle": [[0.0, 0.0], [0.0, 0.3]]
+  }
+}
 ```
-python main.py test.mp4 --output analyzed.mp4
-```
-
-Controls: SPACE to pause/resume, Q/ESC to quit.
 
 ## TODO (Data‑Driven)
 
@@ -74,8 +80,8 @@ Ground the work in the actual direction subfolders found under `training_videos/
 
 - Tooling & tests
   - Unit tests per direction and handedness with short fixtures.
-  - Golden‑frame fixtures for step events and acceptable angle ranges.
-  - CLI: `--batch training_videos` plus per‑direction filters.
+  - Golden-frame fixtures for step events and acceptable angle ranges.
+  - CLI: batch extraction plus student grading flows.
 
 - Visualization
   - Overlay detected direction labels and foot placement markers.
