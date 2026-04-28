@@ -1,5 +1,5 @@
-from enum import IntEnum
-from typing import Any, Dict, List, TypedDict, TypeAlias
+from enum import IntEnum, auto
+from typing import Literal, TypedDict, TypeAlias, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -26,14 +26,21 @@ class COCOKeypoints(IntEnum):
 
 
 class Skill(IntEnum):
-    SERVE = 0
-    CLEAR = 1
-    FOOTWORK = 2
+    SERVE = auto()
+    CLEAR = auto()
+    SMASH = auto()
+    LIFT = auto()
+    BACKHAND_DRIVE = auto()
+    FOREHAND_DRIVE = auto()
+    BACKHAND_NETKILL = auto()
+    FOREHAND_NETKILL = auto()
+    FOOTWORK = auto()
 
     @classmethod
     def convert_to_enum(cls, skill: str) -> "Skill":
         return Skill[skill.upper()]
 
+    @override
     def __str__(self) -> str:
         return self.name.lower()
 
@@ -46,6 +53,7 @@ class Handedness(IntEnum):
     def convert_to_enum(cls, handedness: str) -> "Handedness":
         return Handedness[handedness.upper()]
 
+    @override
     def __str__(self) -> str:
         return self.name.lower()
 
@@ -58,13 +66,10 @@ class BodyCoordinateSystem(TypedDict):
 
 Coordinate: TypeAlias = NDArray[np.float64]  # shape (2,)
 Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, 2)
-CoordinateDict = Dict[COCOKeypoints, Coordinate]
-CoordinatesDict = Dict[COCOKeypoints, Coordinates]
-AngleDict = Dict[str, float] | None
-AngleDicts = List[AngleDict]
-
-
-GraderInput = AngleDicts | CoordinatesDict
+CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate]
+CoordinatesDict: TypeAlias = dict[COCOKeypoints, Coordinates]
+AngleDict: TypeAlias = dict[str, float]
+AngleDicts: TypeAlias = list[AngleDict]
 
 
 class GradingDetail(TypedDict):
@@ -72,22 +77,23 @@ class GradingDetail(TypedDict):
     grade: float
 
 
-class GraderResult(TypedDict):
+class GradingOutcome(TypedDict):
     total_grade: float
     grading_details: list[GradingDetail]
 
 
 class VideoAnalysisResponse(TypedDict):
-    grade: GraderResult
+    grade: GradingOutcome
     used_angles_data: list[dict[str, float] | None]
     processed_video: str
 
 
 class TrackingData(TypedDict):
-    frames: List[np.ndarray]
-    original_landmarks: List[CoordinateDict | None]
-    normalized_landmarks: List[CoordinateDict | None]
-    hand_positions: List[Coordinate]
-    elbow_positions: List[Coordinate]
-    time_intervals: List[float]
+    frames: list[NDArray[np.uint8]]
+    original_landmarks: list[CoordinateDict]
+    hand_positions: list[Coordinate]
+    elbow_positions: list[Coordinate]
+    time_intervals: list[float]
 
+
+StepSequence: TypeAlias = list[Literal["L", "R"]]

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
-from normalization import BodyCentricNormalizer
-from core.types import COCOKeypoints
+from badminton_analysis.services.body_normalizer import BodyCentricNormalizer
+from badminton_analysis.models.types import COCOKeypoints
 
 
 class TestBodyCentricNormalizer:
@@ -32,7 +32,7 @@ class TestBodyCentricNormalizer:
         assert isinstance(self.normalizer, BodyCentricNormalizer)
 
     def test_create_body_coordinate_system_basic(self):
-        result = self.normalizer._BodyCentricNormalizer__create_body_coordinate_system(
+        result = self.normalizer._create_body_coordinate_system(
             self.sample_landmarks
         )
 
@@ -49,7 +49,7 @@ class TestBodyCentricNormalizer:
         assert abs(y_axis_length - 1.0) < 1e-10
 
     def test_create_body_coordinate_system_minimal_case(self):
-        result = self.normalizer._BodyCentricNormalizer__create_body_coordinate_system(
+        result = self.normalizer._create_body_coordinate_system(
             self.minimal_landmarks
         )
 
@@ -62,7 +62,7 @@ class TestBodyCentricNormalizer:
         np.testing.assert_array_almost_equal(result["y_axis"], expected_y_axis)
 
     def test_create_body_coordinate_system_origin_calculation(self):
-        result = self.normalizer._BodyCentricNormalizer__create_body_coordinate_system(
+        result = self.normalizer._create_body_coordinate_system(
             self.minimal_landmarks
         )
 
@@ -83,7 +83,7 @@ class TestBodyCentricNormalizer:
             COCOKeypoints.RIGHT_SHOULDER: (10, 0),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__apply_matrix_transformation(
+        result = self.normalizer._apply_matrix_transformation(
             landmarks, body_system
         )
 
@@ -106,7 +106,7 @@ class TestBodyCentricNormalizer:
             COCOKeypoints.RIGHT_SHOULDER: (0, 1),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__apply_matrix_transformation(
+        result = self.normalizer._apply_matrix_transformation(
             landmarks, body_system
         )
 
@@ -115,47 +115,35 @@ class TestBodyCentricNormalizer:
         assert isinstance(result[COCOKeypoints.LEFT_SHOULDER], np.ndarray)
         assert isinstance(result[COCOKeypoints.RIGHT_SHOULDER], np.ndarray)
 
-    def test_normalize_by_shoulder_width_basic(self):
+    def test_normalize_pose_scales_by_shoulder_width(self):
         landmarks = {
             COCOKeypoints.LEFT_SHOULDER: (0, 0),
             COCOKeypoints.RIGHT_SHOULDER: (10, 0),
+            COCOKeypoints.LEFT_HIP: (0, 10),
+            COCOKeypoints.RIGHT_HIP: (10, 10),
             COCOKeypoints.LEFT_ELBOW: (5, 5),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
-            landmarks
+        result = self.normalizer.normalize_pose(landmarks)
+
+        np.testing.assert_allclose(
+            result[COCOKeypoints.LEFT_SHOULDER], np.array([-0.5, 0.5])
+        )
+        np.testing.assert_allclose(
+            result[COCOKeypoints.RIGHT_SHOULDER], np.array([0.5, 0.5])
+        )
+        np.testing.assert_allclose(
+            result[COCOKeypoints.LEFT_ELBOW], np.array([0.0, 0.0])
         )
 
-        # Shoulder width is 10, so all coordinates should be divided by 10
-        np.testing.assert_allclose(result[COCOKeypoints.LEFT_SHOULDER], np.array([0.0, 0.0]))
-        np.testing.assert_allclose(result[COCOKeypoints.RIGHT_SHOULDER], np.array([1.0, 0.0]))
-        np.testing.assert_allclose(result[COCOKeypoints.LEFT_ELBOW], np.array([0.5, 0.5]))
-
-    def test_normalize_by_shoulder_width_missing_shoulders(self):
-        # Test with missing shoulder landmarks
+    def test_normalize_pose_missing_critical_landmarks_returns_empty(self):
         landmarks = {
             COCOKeypoints.LEFT_ELBOW: (5, 5),
             COCOKeypoints.RIGHT_ELBOW: (15, 5),
         }
 
-        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
-            landmarks
-        )
+        result = self.normalizer.normalize_pose(landmarks)
 
-        # Should return empty dict when shoulders are missing
-        assert result == {}
-
-    def test_normalize_by_shoulder_width_missing_one_shoulder(self):
-        landmarks = {
-            COCOKeypoints.LEFT_SHOULDER: (0, 0),
-            COCOKeypoints.LEFT_ELBOW: (5, 5),
-        }
-
-        result = self.normalizer._BodyCentricNormalizer__normalize_scale(
-            landmarks
-        )
-
-        # Should return empty dict when one shoulder is missing
         assert result == {}
 
     def test_normalize_pose_integration(self):

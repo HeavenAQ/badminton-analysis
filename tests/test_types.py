@@ -1,5 +1,5 @@
 import pytest
-from core.types import COCOKeypoints, Skill, Handedness
+from badminton_analysis.models.types import COCOKeypoints, Skill, Handedness
 
 
 class TestCOCOKeypoints:
@@ -15,8 +15,8 @@ class TestCOCOKeypoints:
 
 class TestSkill:
     def test_skill_values(self):
-        assert Skill.SERVE == 0
-        assert Skill.CLEAR == 1
+        assert Skill.SERVE == 1
+        assert Skill.CLEAR == 2
 
     def test_skill_convert_to_enum(self):
         assert Skill.convert_to_enum("serve") == Skill.SERVE

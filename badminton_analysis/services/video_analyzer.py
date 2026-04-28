@@ -1,16 +1,20 @@
-from typing import Any, Optional, Tuple, Literal
+from math import inf
+from typing import Any, Literal, final
 
 import numpy as np
 from numpy.typing import NDArray
 
-from core.logger import Logger
-from core.joints import JOINTS
-from core.types import (
+from badminton_analysis.core.logger import Logger
+from badminton_analysis.models.joints import JOINTS
+from badminton_analysis.models.types import (
+    AngleDict,
     Coordinate,
     CoordinateDict,
+    Skill,
+    StepSequence,
 )
-from pose import PoseDetector
-from video.constants import (
+from badminton_analysis.services.pose_detector import PoseDetector
+from badminton_analysis.models.constants import (
     SMOOTHING_WINDOW_SIZE,
     IMPACT_FRAME_SEARCH_WINDOW_BEFORE,
     IMPACT_FRAME_SEARCH_WINDOW_AFTER,
@@ -18,6 +22,7 @@ from video.constants import (
 )
 
 
+@final
 class VideoAnalyzer:
     logger = Logger("VideoAnalyzer")
 
@@ -39,32 +44,34 @@ class VideoAnalyzer:
         return np.column_stack((xs, ys))
 
     @staticmethod
-    def calculate_velocity(
+    def calc_velocity(
         positions: NDArray[np.floating[Any]] | list[Coordinate],
         dt: float,
         n: int = 1,
     ) -> NDArray[np.floating[Any]]:
         positions = np.asarray(positions, dtype=np.float64)
         pos_shift = positions[n:] - positions[:-n]
-        return 10.0 * (np.linalg.norm(pos_shift, axis=1) / (n * dt))
+        velocity = 10.0 * (np.linalg.norm(pos_shift, axis=1) / (n * dt))
+        return np.asarray(velocity, dtype=np.float64)
 
     @staticmethod
-    def calculate_acceleration(
+    def calc_acceleration(
         velocities: NDArray[np.floating[Any]],
         dt: float,
         n: int = 1,
     ) -> NDArray[np.floating[Any]]:
         return 10.0 * (np.diff(velocities) / (n * dt))
 
-    @staticmethod
+    @classmethod
     def find_acc_analysis_window(
+        cls,
         hand_positions: list[Coordinate],
-    ) -> Tuple[int, int, int]:
-        smoothed_positions = VideoAnalyzer.moving_average(
+    ) -> tuple[int, int, int]:
+        positions = cls.moving_average(
             hand_positions, window_size=SMOOTHING_WINDOW_SIZE
         )
-        velocities = VideoAnalyzer.calculate_velocity(smoothed_positions, 1, 1)
-        accelerations = VideoAnalyzer.calculate_acceleration(velocities, 1, 1)
+        velocities = cls.calc_velocity(positions, 1, 1)
+        accelerations = cls.calc_acceleration(velocities, 1, 1)
         peak_frame = int(np.argmax(accelerations)) + 2 if accelerations.size > 0 else 0
         start_frame = max(0, peak_frame - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
         end_frame = min(
@@ -73,12 +80,63 @@ class VideoAnalyzer:
         return start_frame, peak_frame, end_frame
 
     @staticmethod
-    def find_smash_analysis_window(
+    def dynamic_time_warping(
+        from_signal: list[Coordinate],
+        to_signal: list[Coordinate],
+    ) -> tuple[NDArray[np.int64], float]:
+        from_sig = np.asarray(from_signal)
+        to_sig = np.asarray(to_signal)
+
+        # init
+        M, N = from_sig.shape[0] + 1, to_sig.shape[0] + 1
+        dp = np.full((M, N), inf, dtype=np.float64)
+        dp[0, 0] = 0.0
+
+        # calculate minimum cost
+        for i in range(1, M):
+            for j in range(1, N):
+                penalty = np.min(
+                    [
+                        dp[i - 1, j - 1],  # match
+                        dp[i - 1, j],  # delete
+                        dp[i, j - 1],  # insert
+                    ]
+                )
+                diff = np.linalg.norm(from_sig[i - 1] - to_sig[j - 1])
+                dp[i, j] = diff + penalty
+
+        # the total cost mapping from_signal to to_signal
+        cost = dp[M - 1][N - 1]
+
+        # get the mapping
+        path = []
+        i, j = M - 1, N - 1
+        while i > 0 and j > 0:
+            path.append((i - 1, j - 1))
+            choices = [
+                dp[i - 1, j - 1],
+                dp[i - 1, j],
+                dp[i, j - 1],
+            ]
+
+            move = np.argmin(choices)
+            if move == 0:
+                i -= 1
+                j -= 1
+            elif move == 1:
+                i -= 1
+            else:
+                j -= 1
+
+        path.reverse()
+        return np.asarray(path), cost
+
+    @classmethod
+    def __find_smash_analysis_window(
+        cls,
         hand_positions: list[Coordinate],
-    ) -> Tuple[int, int, int]:
-        start_frame, _, end_frame = VideoAnalyzer.find_acc_analysis_window(
-            hand_positions
-        )
+    ) -> tuple[int, int, int]:
+        start_frame, _, end_frame = cls.find_acc_analysis_window(hand_positions)
         idx = np.argmin(np.asarray(hand_positions)[start_frame:end_frame, 1])
         new_peak = int(idx + start_frame)
         new_start = max(0, new_peak - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
@@ -87,14 +145,15 @@ class VideoAnalyzer:
         )
         return new_start, new_peak, new_end
 
-    @staticmethod
-    def find_serve_analysis_window(
+    @classmethod
+    def __find_serve_analysis_window(
+        cls,
         hand_positions: list[Coordinate],
         elbow_positions: list[Coordinate],
-        start_frame: int,
-        peak_frame: int,
-        end_frame: int,
-    ) -> Tuple[int, int, int]:
+    ) -> tuple[int, int, int]:
+        start_frame, peak_frame, end_frame = cls.find_acc_analysis_window(
+            hand_positions
+        )
         sub_range_positions = hand_positions[int(start_frame) : int(end_frame)]
         arr = np.asarray(sub_range_positions, dtype=np.float64)
         if arr.size > 0:
@@ -114,25 +173,94 @@ class VideoAnalyzer:
         final_end_frame = min(len(hand_positions), end_frame)
         return int(start_frame), int(peak_frame), int(final_end_frame)
 
+    @classmethod
+    def find_footwork_patterns(
+        cls,
+        right_foot_positions: list[Coordinate],
+        left_foot_positions: list[Coordinate],
+    ) -> StepSequence:
+        right = cls.moving_average(right_foot_positions)
+        left = cls.moving_average(left_foot_positions)
+
+        right_vel = cls.calc_velocity(right, 1, 1)
+        left_vel = cls.calc_velocity(left, 1, 1)
+
+        sequence: StepSequence = []
+        right_vel_thresh = right_vel.mean() - right_vel.std()
+        left_vel_thresh = left_vel.mean() - left_vel.std()
+        is_right_moving = False
+        is_left_moving = False
+
+        for i in range(len(right_vel)):
+            # Append if to the foot is moving
+            if is_right_moving and right_vel[i] > right_vel_thresh:
+                sequence.append("R")
+
+            if is_left_moving and left_vel[i] > left_vel_thresh:
+                sequence.append("L")
+
+            is_right_moving = right_vel[i] > right_vel_thresh
+            is_left_moving = left_vel[i] > left_vel_thresh
+
+        return sequence
+
+    @classmethod
+    def find_analysis_window(
+        cls,
+        *,
+        skill: Skill,
+        hand_positions: list[Coordinate] | None,
+        elbow_positions: list[Coordinate] | None,
+    ) -> tuple[int, int, int]:
+        if not any([hand_positions, elbow_positions]):
+            cls.logger.error("At least one coordinate list should be provided")
+            return -1, -1, -1
+
+        match skill:
+            case Skill.SERVE | Skill.LIFT:
+                if hand_positions and elbow_positions:
+                    return cls.__find_serve_analysis_window(
+                        hand_positions, elbow_positions
+                    )
+                cls.logger.error("At least one coordinate list should be provided")
+                return -1, -1, -1
+
+            case Skill.CLEAR | Skill.SMASH:
+                if hand_positions:
+                    return cls.__find_smash_analysis_window(hand_positions)
+
+            case Skill.FOOTWORK:
+                return -1, -1, -1
+
+        return -1, -1, -1
+
+    @staticmethod
+    def mirror_angles(angles: AngleDict) -> AngleDict:
+        """Swap Left↔Right labels to normalize a left-handed player's data to right-handed frame."""
+        mapping = {
+            "Left Elbow Angle": "Right Elbow Angle",
+            "Right Elbow Angle": "Left Elbow Angle",
+            "Left Knee Angle": "Right Knee Angle",
+            "Right Knee Angle": "Left Knee Angle",
+            "Left Shoulder Angle": "Right Shoulder Angle",
+            "Right Shoulder Angle": "Left Shoulder Angle",
+            "Left Crotch Angle": "Right Crotch Angle",
+            "Right Crotch Angle": "Left Crotch Angle",
+            "Nose Right Shoulder Elbow Angle": "Nose Left Shoulder Elbow Angle",
+            "Nose Left Shoulder Elbow Angle": "Nose Right Shoulder Elbow Angle",
+        }
+        return {mapping.get(k, k): v for k, v in angles.items()}
+
     @staticmethod
     def compute_angles(
-        frame_index: int,
-        normalized_landmarks: list[CoordinateDict | None],
-        pose_detector: PoseDetector | None = None,
-    ) -> Optional[dict[str, float]]:
-        if (
-            frame_index >= len(normalized_landmarks)
-            or not normalized_landmarks[frame_index]
-        ):
-            return None
-        landmarks = normalized_landmarks[frame_index]
-        assert landmarks is not None
+        landmark: CoordinateDict,
+    ) -> AngleDict:
         angles: dict[str, float] = {key: 0.0 for key in JOINTS.keys()}
         for joint_name, (point_a_id, point_b_id, point_c_id) in JOINTS.items():
-            if all(kp in landmarks for kp in (point_a_id, point_b_id, point_c_id)):
-                point_a = landmarks[point_a_id]
-                point_b = landmarks[point_b_id]
-                point_c = landmarks[point_c_id]
+            if all(kp in landmark for kp in (point_a_id, point_b_id, point_c_id)):
+                point_a = landmark[point_a_id]
+                point_b = landmark[point_b_id]
+                point_c = landmark[point_c_id]
                 angle = PoseDetector.compute_angle(point_a, point_b, point_c)
                 if angle is not None and isinstance(angle, float):
                     angles[joint_name] = angle

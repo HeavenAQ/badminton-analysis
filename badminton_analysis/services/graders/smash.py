@@ -1,14 +1,14 @@
 import pandas as pd
 from typing import final, override
 
-from badminton_analysis.core.types import (
+from badminton_analysis.models.types import (
     AngleDicts,
     CoordinateDict,
     GradingDetail,
     GradingOutcome,
     Handedness,
 )
-from badminton_analysis.graders.base import Grader
+from badminton_analysis.services.graders.base import Grader
 
 
 @final
@@ -75,7 +75,7 @@ class SmashGrader(Grader):
 
     def grade_checkpoint_6(
         self, angles: AngleDicts, landmark_list: list[CoordinateDict], frame_idx: int
-    ):
+    ) -> float:
         """
         Ending Pose. Full score: 20
         """

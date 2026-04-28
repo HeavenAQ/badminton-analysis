@@ -2,15 +2,15 @@ from typing import List
 import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, mock_open
-from processing import VideoProcessor
-from analysis import VideoAnalyzer
-from graders import PlayerGrader
-from core.types import CoordinateDict, Coordinates, Skill, Handedness, TrackingData
+from badminton_analysis.services.video_processor import VideoProcessor
+from badminton_analysis.services.video_analyzer import VideoAnalyzer
+from badminton_analysis.services.graders import PlayerGrader
+from badminton_analysis.models.types import CoordinateDict, Coordinates, Skill, Handedness, TrackingData
 
 
 class TestVideoProcessor:
     def setup_method(self, mock_pose_detector):
-        with patch("processing.video_processor.PoseDetector") as mock_pose_detector:
+        with patch("badminton_analysis.services.video_processor.PoseDetector") as mock_pose_detector:
             mock_pose_detector.return_value = MagicMock()
             self.processor = VideoProcessor("test.mp4", "output.mp4", "/tmp")
 
@@ -42,7 +42,7 @@ class TestVideoProcessor:
     def test_calculate_velocity_dynamic(self):
         positions: Coordinates = np.array([(0, 0), (3, 4), (6, 8)])
         time_intervals = [0.1, 0.1]  # 2 intervals for 3 positions
-        velocities = VideoAnalyzer.calculate_velocity(positions, 1, 1)
+        velocities = VideoAnalyzer.calc_velocity(positions, 1, 1)
 
         assert len(velocities) == 2
         assert velocities[0] == pytest.approx(50.0, rel=1e-2)
@@ -50,7 +50,7 @@ class TestVideoProcessor:
     def test_calculate_acceleration_dynamic(self):
         velocities = np.asarray([10, 20, 30])
         time_intervals = [0.1, 0.1]  # 2 intervals for 3 velocities
-        accelerations = VideoAnalyzer.calculate_acceleration(velocities, 1, 1)
+        accelerations = VideoAnalyzer.calc_acceleration(velocities, 1, 1)
 
         assert len(accelerations) == 2  # Should be len(velocities) - 1
         assert accelerations[0] == pytest.approx(100.0, rel=1e-2)
@@ -95,19 +95,12 @@ class TestVideoProcessor:
 
     def test_compute_angles_no_landmarks(self):
         analyzer = VideoAnalyzer()
-        # Test with empty normalized_landmarks
-        normalized_landmarks: list[CoordinateDict | None] = []
-        # Use a dummy pose detector since it won't be called
-        result = analyzer.compute_angles(0, normalized_landmarks, MagicMock())
-        assert result is None
+        result = analyzer.compute_angles({})
+        assert isinstance(result, dict)
+        assert all(angle == 0.0 for angle in result.values())
 
-        # Test with frame index out of range
-        normalized_landmarks = [{}]  # One empty landmark set
-        result = analyzer.compute_angles(1, normalized_landmarks, MagicMock())
-        assert result is None
-
-    @patch("processing.video_processor.cv2.VideoWriter")
-    @patch("processing.video_processor.os.path.join")
+    @patch("badminton_analysis.services.video_processor.cv2.VideoWriter")
+    @patch("badminton_analysis.services.video_processor.os.path.join")
     def test_save_video_segment(self, mock_join, mock_writer):
         mock_join.return_value = "/tmp/segment.mp4"
         mock_writer_instance = MagicMock()
@@ -116,7 +109,7 @@ class TestVideoProcessor:
         self.processor.frames = [
             np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(5)
         ]
-        self.processor.original_landmarks = [None for _ in range(5)]
+        self.processor.landmarks = [None for _ in range(5)]
         self.processor.normalized_landmarks = [None for _ in range(5)]
 
         result = self.processor.save_video_segment(0, 4, 30.0)
@@ -142,12 +135,12 @@ class TestVideoProcessor:
         ):
             with patch.object(
                 VideoAnalyzer,
-                "calculate_velocity",
+                "calc_velocity",
                 return_value=np.array([1.0] * (num_frames - 1)),
             ):
                 with patch.object(
                     VideoAnalyzer,
-                    "calculate_acceleration",
+                    "calc_acceleration",
                     return_value=np.array([0.1] * (num_frames - 2)),
                 ):
                     start, peak, end = analyzer.find_acc_analysis_window(hand_positions)
@@ -157,33 +150,31 @@ class TestVideoProcessor:
         assert isinstance(end, int)
         assert 0 <= start <= peak <= end <= num_frames
 
-    @patch("graders.registry.GraderRegistry.get")
+    @patch("badminton_analysis.services.graders.registry.GraderRegistry.get")
     def test_calculate_grade(self, mock_grader_get):
         mock_grader = MagicMock()
         mock_grader.grade.return_value = {"total_grade": 85, "grading_details": []}
         mock_grader_get.return_value = mock_grader
 
-        normalized_landmarks: list[CoordinateDict | None] = [{} for _ in range(10)]
         tracking: TrackingData = {
             "frames": [],
-            "original_landmarks": [],
-            "normalized_landmarks": normalized_landmarks,
+            "original_landmarks": [{} for _ in range(5)],
             "hand_positions": [np.array([i, i]) for i in range(5)],
             "elbow_positions": [np.array([i, i]) for i in range(5)],
             "time_intervals": [0.033 for _ in range(4)],
         }
         with patch.object(
-            VideoAnalyzer, "compute_angles", return_value={"Right Elbow": 90}
+            VideoAnalyzer, "find_analysis_window", return_value=(0, 2, 4)
+        ), patch.object(
+            VideoAnalyzer, "compute_angles", return_value={"Right Elbow Angle": 90}
         ):
             grader = PlayerGrader()
-            result, window = grader.grade(
-                Skill.SERVE, Handedness.RIGHT, tracking, MagicMock()
-            )
+            result, window = grader.grade(Skill.SERVE, Handedness.RIGHT, tracking)
 
         assert result["total_grade"] == 85
         mock_grader.grade.assert_called_once()
 
-    @patch("processing.video_processor.base64.b64encode")
+    @patch("badminton_analysis.services.video_processor.base64.b64encode")
     @patch("builtins.open", new_callable=mock_open, read_data=b"fake video data")
     def test_create_video_clip_base64(self, mock_file, mock_b64encode):
         mock_b64encode.return_value = b"encoded_data"
@@ -201,15 +192,14 @@ class TestVideoProcessor:
         with patch.object(self.processor, "process_frames") as mock_process_frames:
             tracking: TrackingData = {
                 "frames": [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(5)],
-                "original_landmarks": [None for _ in range(5)],
-                "normalized_landmarks": [{} for _ in range(5)],
+                "original_landmarks": [{} for _ in range(5)],
                 "hand_positions": [np.array([i, i]) for i in range(5)],
                 "elbow_positions": [np.array([i, i]) for i in range(5)],
                 "time_intervals": [0.033 for _ in range(4)],
             }
             mock_process_frames.return_value = tracking
 
-            with patch("graders.registry.GraderRegistry.get") as mock_grader_get:
+            with patch("badminton_analysis.services.graders.registry.GraderRegistry.get") as mock_grader_get:
                 mock_grader = MagicMock()
                 mock_grader.grade.return_value = {
                     "total_grade": 80,
@@ -220,9 +210,12 @@ class TestVideoProcessor:
                 # Simulate extraction call
                 extracted = self.processor.process_frames(Handedness.RIGHT.value)
                 grader = PlayerGrader()
-                result, _ = grader.grade(
-                    Skill.SERVE, Handedness.RIGHT, extracted, MagicMock()
-                )
+                with patch.object(
+                    VideoAnalyzer, "find_analysis_window", return_value=(0, 2, 4)
+                ), patch.object(
+                    VideoAnalyzer, "compute_angles", return_value={"Right Elbow Angle": 90}
+                ):
+                    result, _ = grader.grade(Skill.SERVE, Handedness.RIGHT, extracted)
 
         assert result["total_grade"] == 80
         mock_process_frames.assert_called_once()

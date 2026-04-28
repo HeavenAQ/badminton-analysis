@@ -1,162 +1,264 @@
 from typing import Any, override
 import pandas as pd
-from .base import Grader, EMPTY_GRADER_RESULT
-from core.logger import Logger
-from core.types import (
+import numpy as np
+from pathlib import Path
+from .base import Grader
+from badminton_analysis.models.types import (
     AngleDicts,
-    GraderInput,
+    COCOKeypoints,
+    CoordinateDict,
     GradingDetail,
-    GraderResult,
+    GradingOutcome,
     Handedness,
-    AngleDict,
 )
-
-serve_mean: Any = None
-serve_std: Any = None
-
-
-def serve_angle_grader(
-    angle_max_grade: float,
-    joint_name: str,
-    frame_idx: str,
-    angle_dict: dict[str, float],
-) -> float:
-    logger = Logger("serve_angle_grader")
-    logger.debug(f"Grading angle for joint: {joint_name}, frame: {frame_idx}")
-    global serve_mean, serve_std
-    if serve_mean is None or serve_std is None:
-        serve_mean = pd.read_excel(
-            "./stats/serve/expert angle stats.xlsx", sheet_name="mean"
-        ).set_index("Unnamed: 0")
-        serve_std = pd.read_excel(
-            "./stats/serve/expert angle stats.xlsx", sheet_name="std"
-        ).set_index("Unnamed: 0")
-    idx = joint_name, frame_idx
-    mean = float(serve_mean.loc[idx])
-    std = float(serve_std.loc[idx])
-    min_angle = mean - std
-    max_angle = mean + std
-    current_angle = angle_dict[joint_name]
-    if min_angle <= current_angle <= max_angle:
-        return angle_max_grade
-    else:
-        if min_angle > current_angle:
-            return float(angle_max_grade) * (float(current_angle) / float(min_angle))
-        else:
-            return float(angle_max_grade) * (float(max_angle) / float(current_angle))
 
 
 class ServeGrader(Grader):
     def __init__(self, handedness: Handedness):
         super().__init__(handedness)
+        self.data_dir = self.data_dir / "serve"
+        self.mean = pd.read_csv(self.data_dir / "mean.csv").set_index("feature")
+        self.std = pd.read_csv(self.data_dir / "std.csv").set_index("feature")
+        self.mean.columns = [0, 1, 2, 3, 4]
+        self.std.columns = [0, 1, 2, 3, 4]
 
-    @property
-    def dominant_shoulder(self) -> str:
-        return f"{str(self.handedness).capitalize()} Shoulder"
-
-    @property
-    def non_dominant_shoulder(self) -> str:
-        non_dominant = (
-            Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
-        )
-        return f"{str(non_dominant).capitalize()} Shoulder"
-
-    @property
-    def dominant_crotch(self) -> str:
-        return f"{str(self.handedness).capitalize()} Crotch"
-
-    @property
-    def non_dominant_crotch(self) -> str:
-        non_dominant = (
-            Handedness.LEFT if self.handedness == Handedness.RIGHT else Handedness.RIGHT
-        )
-        return f"{str(non_dominant).capitalize()} Crotch"
-
-    @property
-    def dominant_elbow(self) -> str:
-        return f"{str(self.handedness).capitalize()} Elbow"
-
-    @property
-    def dominant_shoulder_elbow(self) -> str:
-        return f"Nose {str(self.handedness).capitalize()} Shoulder Elbow"
-
-    def grade_checkpoint_1_arms(self, angle_dict: AngleDict) -> float:
-        if not angle_dict:
+    def grade_checkpoint_1_arms(self, angles: AngleDicts, frame_idx: int) -> float:
+        """
+        The preparation phase of the serve. Full score for this checkpoint: 10
+        """
+        if not angles:
             return 0
-        grade: float = 0.0
-        grade += serve_angle_grader(5, self.dominant_shoulder, "check1", angle_dict)
-        grade += serve_angle_grader(5, self.non_dominant_shoulder, "check1", angle_dict)
-        return grade
+        grade = 0.0
+        if angles[frame_idx][self.dominant_shoulder_key] >= 25:
+            grade += self.angle_grader(5, self.dominant_shoulder_key, frame_idx, angles)
+        if angles[frame_idx][self.non_dominant_shoulder_key] >= 25:
+            grade += self.angle_grader(
+                5, self.non_dominant_shoulder_key, frame_idx, angles
+            )
+        return float(grade)
 
-    def grade_checkpoint_1_legs(self, angle_dict: AngleDict) -> float:
-        if not angle_dict:
+    def grade_checkpoint_1_legs(self, angles: AngleDicts, frame_idx: int) -> float:
+        """
+        The preparation phase of the serve. Full score for this checkpoint: 10
+        """
+        if not angles:
             return 0
-        if angle_dict[self.dominant_crotch] <= angle_dict[self.non_dominant_crotch]:
+        if (
+            angles[frame_idx][self.dominant_crotch_key]
+            <= angles[frame_idx][self.non_dominant_crotch_key]
+        ):
             return 10
         return 0
 
-    def grade_checkpoint_2(
-        self, angle_dict1: AngleDict, angle_dict2: AngleDict
+    def grade_checkpoint_2_lower_body(
+        self,
+        angles: AngleDicts,
+        start_frame: int,
+        end_frame: int,
     ) -> float:
-        if not angle_dict1 or not angle_dict2:
+        """
+        Lower Body weight transfer. Full score for this checkpoint: 20
+        """
+        if not angles:
             return 0
-        grade: float = 0.0
-        if angle_dict1[self.dominant_crotch] < angle_dict2[self.dominant_crotch]:
-            grade += 10
-        if (
-            angle_dict1[self.non_dominant_crotch]
-            > angle_dict2[self.non_dominant_crotch]
-        ):
-            grade += 10
-        return grade
 
-    def grade_checkpoint_3(self, angle_dict: AngleDict) -> float:
-        grade: float = 0.0
-        if not angle_dict:
-            return grade
-        if angle_dict[self.dominant_crotch] > angle_dict[self.non_dominant_crotch]:
-            grade += 20
-        return grade
+        dom_crotch_diff = (
+            angles[end_frame][self.dominant_crotch_key]
+            - angles[start_frame][self.dominant_crotch_key]
+        )
+        non_dom_crotch_diff = (
+            angles[end_frame][self.non_dominant_crotch_key]
+            - angles[start_frame][self.non_dominant_crotch_key]
+        )
 
-    def grade_checkpoint_4(self, angle_dict: AngleDict) -> float:
-        grade: float = 0.0
-        if not angle_dict:
-            return grade
-        grade += serve_angle_grader(20, self.dominant_elbow, "check4", angle_dict)
-        return grade
+        grade = 0.0
+        grade += self.disp_grader(
+            10,
+            dom_crotch_diff,
+            (self.dominant_crotch_key, start_frame),
+            (self.dominant_crotch_key, end_frame),
+        )
+        grade += self.disp_grader(
+            10,
+            non_dom_crotch_diff,
+            (self.non_dominant_crotch_key, start_frame),
+            (self.non_dominant_crotch_key, end_frame),
+        )
 
-    def grade_checkpoint_5(self, angle: AngleDict) -> float:
-        grade: float = 0.0
-        if not angle:
-            return grade
-        grade += serve_angle_grader(10, self.dominant_shoulder, "check5", angle)
-        grade += serve_angle_grader(10, self.dominant_shoulder_elbow, "check5", angle)
-        return grade
+        return float(grade)
+
+    def grade_checkpoint_2_upper_body(
+        self, landmark_list: list[CoordinateDict], start_frame: int, end_frame: int
+    ) -> float:
+        """
+        Upper Body weight transfer. Full score for this checkpoint: 20
+        """
+        # extract the coordinates needed for analysis
+        part = (
+            COCOKeypoints.RIGHT_EYE
+            if self.handedness == Handedness.RIGHT
+            else COCOKeypoints.LEFT_EYE
+        )
+        try:
+            start_eye = landmark_list[start_frame][part][0]
+            end_eye = landmark_list[end_frame][part][0]
+        except KeyError:
+            try:
+                part = (
+                    COCOKeypoints.RIGHT_EAR
+                    if self.handedness == Handedness.RIGHT
+                    else COCOKeypoints.LEFT_EAR
+                )
+                start_eye = landmark_list[start_frame][part][0]
+                end_eye = landmark_list[end_frame][part][0]
+            except KeyError:
+                part = (
+                    COCOKeypoints.LEFT_EYE
+                    if self.handedness == Handedness.RIGHT
+                    else COCOKeypoints.RIGHT_EYE
+                )
+                start_eye = landmark_list[start_frame][part][0]
+                end_eye = landmark_list[end_frame][part][0]
+
+        # calculate the displacement between coordinates
+        learner_disp = end_eye - start_eye
+        return self.disp_grader(
+            20,
+            learner_disp,
+            (f"{part}_x", start_frame),
+            (f"{part}_x", end_frame),
+        )
+
+    def _hip_angle(self, frame: CoordinateDict) -> float:
+        lp = COCOKeypoints.LEFT_HIP
+        rp = COCOKeypoints.RIGHT_HIP
+
+        lx, ly = frame[lp]
+        rx, ry = frame[rp]
+
+        return float(np.degrees(np.arctan2(ry - ly, rx - lx)))
+
+    def grade_checkpoint_3(
+        self,
+        landmark_list: list[CoordinateDict],
+        start_frame: int,
+        end_frame: int,
+    ) -> float:
+        """
+        Bottom rotation using hip-axis angle: Full 20
+        """
+
+        # Learner rotation
+        start_angle = self._hip_angle(landmark_list[start_frame])
+        end_angle = self._hip_angle(landmark_list[end_frame])
+
+        learner_rot = end_angle - start_angle
+        learner_rot = (learner_rot + 180) % 360 - 180  # normalize to [-180, 180]
+
+        # Expert mean rotation
+        exp_start_lp = self.mean.loc[f"{COCOKeypoints.LEFT_HIP}_x", start_frame]
+        exp_start_lp_y = self.mean.loc[f"{COCOKeypoints.LEFT_HIP}_y", start_frame]
+        exp_start_rp = self.mean.loc[f"{COCOKeypoints.RIGHT_HIP}_x", start_frame]
+        exp_start_rp_y = self.mean.loc[f"{COCOKeypoints.RIGHT_HIP}_y", start_frame]
+
+        exp_end_lp = self.mean.loc[f"{COCOKeypoints.LEFT_HIP}_x", end_frame]
+        exp_end_lp_y = self.mean.loc[f"{COCOKeypoints.LEFT_HIP}_y", end_frame]
+        exp_end_rp = self.mean.loc[f"{COCOKeypoints.RIGHT_HIP}_x", end_frame]
+        exp_end_rp_y = self.mean.loc[f"{COCOKeypoints.RIGHT_HIP}_y", end_frame]
+
+        exp_start_angle = np.degrees(
+            np.arctan2(exp_start_rp_y - exp_start_lp_y, exp_start_rp - exp_start_lp)
+        )
+        exp_end_angle = np.degrees(
+            np.arctan2(exp_end_rp_y - exp_end_lp_y, exp_end_rp - exp_end_lp)
+        )
+
+        expert_mean_rot = exp_end_angle - exp_start_angle
+        expert_mean_rot = (expert_mean_rot + 180) % 360 - 180
+
+        # Expert std (angle domain)
+        stds = [
+            self.std.loc[f"{COCOKeypoints.LEFT_HIP}_x", start_frame],
+            self.std.loc[f"{COCOKeypoints.LEFT_HIP}_y", start_frame],
+            self.std.loc[f"{COCOKeypoints.RIGHT_HIP}_x", start_frame],
+            self.std.loc[f"{COCOKeypoints.RIGHT_HIP}_y", start_frame],
+            self.std.loc[f"{COCOKeypoints.LEFT_HIP}_x", end_frame],
+            self.std.loc[f"{COCOKeypoints.LEFT_HIP}_y", end_frame],
+            self.std.loc[f"{COCOKeypoints.RIGHT_HIP}_x", end_frame],
+            self.std.loc[f"{COCOKeypoints.RIGHT_HIP}_y", end_frame],
+        ]
+
+        # Soft pooled std (much smaller than full propagation)
+        expert_std_rot = np.sqrt(sum(s**2 for s in stds) / len(stds))
+
+        if expert_std_rot < 1e-6:
+            return 0.0
+
+        z = (learner_rot - expert_mean_rot) / expert_std_rot
+
+        max_grade = 20
+        if z >= -0.1:
+            return max_grade
+
+        return 0
+
+    def grade_checkpoint_4(self, angles: AngleDicts, frame_idx: int) -> float:
+        """
+        Wrist flick. Full score for this checkpoint: 20
+        """
+        return self.angle_grader(20, self.dominant_elbow_key, frame_idx, angles)
+
+    def grade_checkpoint_5(self, angles: AngleDicts, frame_idx: int) -> float:
+        """
+        Shoulder rotation. Full score for this checkpoint: 20
+        """
+        grade = 0.0
+        grade += self.angle_grader(10, self.dominant_shoulder_key, frame_idx, angles)
+        grade += self.angle_grader(
+            10, self.dominant_shoulder_elbow_key, frame_idx, angles
+        )
+        return float(grade)
 
     @override
-    def grade(self, grader_input: GraderInput) -> GraderResult:
-        if not isinstance(grader_input, list) or len(grader_input) < 5:
-            return EMPTY_GRADER_RESULT
-        angle_list: list[AngleDict] = grader_input
-        check1_arms = self.grade_checkpoint_1_arms(angle_list[0])
-        check1_legs = self.grade_checkpoint_1_legs(angle_list[0])
-        check2 = self.grade_checkpoint_2(angle_list[0], angle_list[1])
-        check3 = self.grade_checkpoint_3(angle_list[2])
-        check4 = self.grade_checkpoint_4(angle_list[3])
-        check5 = self.grade_checkpoint_5(angle_list[4])
+    def grade(
+        self, angles: AngleDicts, landmark_list: list[CoordinateDict]
+    ) -> GradingOutcome:
+        # full score for this: 100
+        check1_arms = self.grade_checkpoint_1_arms(angles, 0)
+        check1_legs = self.grade_checkpoint_1_legs(angles, 0)
+
+        check2_lower = self.grade_checkpoint_2_lower_body(
+            angles,
+            0,
+            1,
+        )
+        check2_upper = self.grade_checkpoint_2_upper_body(
+            landmark_list,
+            1,
+            3,
+        )
+        # if one fails, body weight transfer fails
+        check2 = min(check2_lower, check2_upper)
+
+        check3 = self.grade_checkpoint_3(
+            landmark_list,
+            0,
+            4,
+        )
+        check4 = self.grade_checkpoint_4(angles, 3)
+        check5 = self.grade_checkpoint_5(angles, 4)
         total = check1_arms + check1_legs + check2 + check3 + check4 + check5
+        print(f"Total grade: {total}")
         grading_details: list[GradingDetail] = [
-            {"description": "雙手平舉", "grade": check1_arms},
-            {"description": "將重心放至持拍腳", "grade": check1_legs},
-            {"description": "身體重心轉移至非持拍腳", "grade": check2},
-            {"description": "髖關節前旋", "grade": check3},
-            {"description": "持拍手手腕發力", "grade": check4},
-            {"description": "肩膀旋轉朝前", "grade": check5},
+            GradingDetail(description="雙手平舉", grade=check1_arms),
+            GradingDetail(description="將重心放至持拍腳", grade=check1_legs),
+            GradingDetail(description="重心轉移至非持拍腳", grade=check2),
+            GradingDetail(description="髖關節前旋", grade=check3),
+            GradingDetail(description="持拍手手腕發力", grade=check4),
+            GradingDetail(description="肩膀旋轉朝前", grade=check5),
         ]
-        return {
-            "grading_details": grading_details,
-            "total_grade": total,
-        }
 
-
-__all__ = ["ServeGrader", "serve_angle_grader", "serve_mean", "serve_std"]
+        return GradingOutcome(
+            grading_details=grading_details,
+            total_grade=total,
+        )

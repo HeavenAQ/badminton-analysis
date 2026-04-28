@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "badminton-analysis"
 version = "0.1.0"
@@ -5,16 +9,21 @@ description = "Pose detection, normalization, and graders for badminton analysis
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "numpy==1.26.4",
     # Prefer headless OpenCV by default; use the 'gui' extra for display backends
     "opencv-python-headless==4.10.0.84",
     "pillow==10.4.0",
     "pandas==2.2.3",
     "openpyxl==3.1.5",
-    "ultralytics==8.3.27",
-    # Explicit torch deps for ultralytics/YOLO
-    "torch==2.5.1",
     "torchvision==0.20.1",
+    "types-torch>=0.1.1",
+    "scikit-learn>=1.7.2",
+    "shapely>=2.1.2",
+    "opencv-contrib-python>=4.10.0.84",
+    "xlsxwriter>=3.2.9",
+    "ultralytics>=8.4.14",
+    "torch>=2.5.1",
+    "torchtyping>=0.1.5",
+    "lap>=0.5.13",
 ]
 
 [project.optional-dependencies]
@@ -26,11 +35,21 @@ gui = [
 ]
 
 [project.scripts]
-badminton-live = "main:main"
-analyze-batch = "tools.analyze:main"
+analyze-batch = "badminton_analysis.tools.analyze:main"
+grade-students = "badminton_analysis.tools.grade_students:main"
 
 [dependency-groups]
 dev = ["pytest == 8.3.3", "mypy== 1.18.2"]
 
 [tool.basedpyright]
 reportExplicitAny = false
+# Ensure the LSP points at the project venv managed by uv
+venvPath = "."
+venv = ".venv"
+# Match interpreter version and enable using runtime code when stubs are missing
+pythonVersion = "3.12"
+useLibraryCodeForTypes = true
+# Look for additional third-party stubs in this folder (optional)
+stubPath = "typings"
+# Torch/torchvision often lack full stubs; suppress the "missing type stubs" noise
+reportMissingTypeStubs = "none"
