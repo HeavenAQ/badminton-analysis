@@ -22,7 +22,6 @@ def _flatten_details(details: list[GradingDetail]) -> dict[str, Any]:
 def grade_videos_in_dir(
     input_dir: str,
     output_dir: str,
-    handedness: Handedness,
     skill: Skill,
     *,
     footwork_reference_path: str | None = None,
@@ -32,7 +31,9 @@ def grade_videos_in_dir(
     destination_dir.mkdir(parents=True, exist_ok=True)
 
     videos = sorted(
-        path for path in source_dir.iterdir() if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+        path
+        for path in source_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
     )
     if not videos:
         raise ValueError(f"No videos found in input directory: {input_dir}")
@@ -43,6 +44,8 @@ def grade_videos_in_dir(
 
     for video_path in videos:
         print(f"Processing: {video_path}")
+        handedness = Handedness.LEFT if "left" in video_path.name else Handedness.RIGHT
+
         try:
             processor = VideoProcessor(
                 str(video_path),
@@ -68,23 +71,22 @@ def grade_videos_in_dir(
                 "end_frame": window[2],
             }
             row.update(_flatten_details(grade["grading_details"]))
-            rows.append(row)
         except Exception as exc:
+            print(f"  ERROR: {exc}")
             failures += 1
-            print(f"Failed: {video_path} ({exc})")
-            rows.append(
-                {
-                    "filename": video_path.name,
-                    "skill": str(skill),
-                    "handedness": str(handedness),
-                    "status": "failed",
-                    "error": str(exc),
-                    "total_grade": None,
-                    "start_frame": None,
-                    "peak_frame": None,
-                    "end_frame": None,
-                }
-            )
+            row = {
+                "filename": video_path.name,
+                "skill": str(skill),
+                "handedness": str(handedness),
+                "status": "error",
+                "error": str(exc),
+                "total_grade": 0,
+                "start_frame": -1,
+                "peak_frame": -1,
+                "end_frame": -1,
+            }
+
+        rows.append(row)
 
     return rows, failures
 
@@ -93,12 +95,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Grade student badminton videos in a directory",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--handedness",
-        required=True,
-        choices=[str(handedness) for handedness in Handedness],
-        help="Handedness of the student(s) in the videos",
     )
     parser.add_argument(
         "--skill",
@@ -132,7 +128,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Error: input directory not found: {args.input_dir}")
         return 1
 
-    handedness = Handedness.convert_to_enum(args.handedness)
     skill = Skill.convert_to_enum(args.skill)
 
     if skill == Skill.FOOTWORK and not args.reference_data:
@@ -143,7 +138,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows, failures = grade_videos_in_dir(
             args.input_dir,
             args.output_dir,
-            handedness,
             skill,
             footwork_reference_path=args.reference_data,
         )
