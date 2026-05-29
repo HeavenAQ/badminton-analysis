@@ -55,8 +55,9 @@ class TestGraderRegistry:
         assert isinstance(grader, TestGrader)
 
     def test_get_unregistered_grader_raises_error(self):
-        with pytest.raises(ValueError, match="No grader registered"):
-            GraderRegistry.get(Skill.CLEAR, Handedness.LEFT)
+        with patch.dict(GraderRegistry._registry, {}, clear=True):
+            with pytest.raises(ValueError, match="No grader registered"):
+                GraderRegistry.get(Skill.CLEAR, Handedness.LEFT)
 
 
 class TestServeGrader:

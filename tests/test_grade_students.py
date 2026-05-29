@@ -47,8 +47,6 @@ def test_grade_students_main_writes_csv(tmp_path: Path, monkeypatch) -> None:
 
     exit_code = grade_students.main(
         [
-            "--handedness",
-            "right",
             "--skill",
             "serve",
             "--input-dir",
@@ -100,8 +98,6 @@ def test_grade_students_main_handles_per_video_failures(
 
     exit_code = grade_students.main(
         [
-            "--handedness",
-            "right",
             "--skill",
             "serve",
             "--input-dir",
@@ -113,7 +109,7 @@ def test_grade_students_main_handles_per_video_failures(
 
     assert exit_code == 0
     result = pd.read_csv(output_dir / "grading_results.csv")
-    assert list(result["status"]) == ["failed", "success"]
+    assert list(result["status"]) == ["error", "success"]
     assert "broken video" in result.loc[result["filename"] == "bad.mov", "error"].iloc[0]
 
 
@@ -125,8 +121,6 @@ def test_grade_students_main_requires_footwork_reference(tmp_path: Path) -> None
 
     exit_code = grade_students.main(
         [
-            "--handedness",
-            "right",
             "--skill",
             "footwork",
             "--input-dir",
