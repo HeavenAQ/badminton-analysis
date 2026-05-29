@@ -65,8 +65,8 @@ class BackhandNetKillGrader(NetKillGrader):
         super().__init__(handedness)
         dir = "右前" if self.handedness == Handedness.LEFT else "左前"
         self.data_dir = self.data_dir / dir
-        self.mean = pd.read_csv(self.data_dir / "mean.csv").set_index("feature")
-        self.std = pd.read_csv(self.data_dir / "std.csv").set_index("feature")
+        self.mean = pd.read_csv(self.data_dir / "mean.csv", index_col=0).set_index("feature")
+        self.std = pd.read_csv(self.data_dir / "std.csv", index_col=0).set_index("feature")
         self.mean.columns = [0, 1, 2, 3, 4]
         self.std.columns = [0, 1, 2, 3, 4]
 
@@ -77,7 +77,7 @@ class ForehandNetKillGrader(NetKillGrader):
         super().__init__(handedness)
         dir = "左前" if self.handedness == Handedness.LEFT else "右前"
         self.data_dir = self.data_dir / dir
-        self.mean = pd.read_csv(self.data_dir / "mean.csv").set_index("feature")
-        self.std = pd.read_csv(self.data_dir / "std.csv").set_index("feature")
+        self.mean = pd.read_csv(self.data_dir / "mean.csv", index_col=0).set_index("feature")
+        self.std = pd.read_csv(self.data_dir / "std.csv", index_col=0).set_index("feature")
         self.mean.columns = [0, 1, 2, 3, 4]
         self.std.columns = [0, 1, 2, 3, 4]

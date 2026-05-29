@@ -1,6 +1,11 @@
-from badminton_analysis.services.body_normalizer import BodyCentricNormalizer
 from badminton_analysis.services.video_analyzer import VideoAnalyzer
-from badminton_analysis.models.types import GradingOutcome, Handedness, Skill, TrackingData
+from badminton_analysis.models.types import (
+    CoordinateDict,
+    GradingOutcome,
+    Handedness,
+    Skill,
+    TrackingData,
+)
 from badminton_analysis.services.graders.registry import GraderRegistry
 
 
@@ -40,25 +45,20 @@ class PlayerGrader:
             hand_positions=hand_positions,
             elbow_positions=elbow_positions,
         )
-        landmark_list = [
-            tracking["original_landmarks"][i]
-            for i in (
-                start_index,
-                (start_index + peak_frame) // 2,
-                peak_frame,
-                (peak_frame + end_index) // 2,
-                end_index,
-            )
+        key_indices = (
+            start_index,
+            (start_index + peak_frame) // 2,
+            peak_frame,
+            (peak_frame + end_index) // 2,
+            end_index,
+        )
+        # Raw landmarks are passed to the grader for scale-invariant rotation
+        # computations (atan2-based hip/shoulder line deltas).
+        landmark_list: list[CoordinateDict] = [
+            tracking["original_landmarks"][i] for i in key_indices
         ]
 
-        normalizer = BodyCentricNormalizer(handedness == Handedness.RIGHT)
-        normalized_landmarks = [
-            normalizer.normalize_pose(landmark)
-            for landmark in landmark_list
-        ]
-        angle_list = list(map(VideoAnalyzer.compute_angles, normalized_landmarks))
-        if handedness == Handedness.LEFT:
-            angle_list = [VideoAnalyzer.mirror_angles(angles) for angles in angle_list]
+        angle_list = list(map(VideoAnalyzer.compute_angles, landmark_list))
         grader = GraderRegistry.get(skill, handedness)
         result = grader.grade(angle_list, landmark_list)
         return result, (start_index, peak_frame, end_index)

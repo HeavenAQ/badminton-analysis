@@ -135,13 +135,14 @@ class VideoAnalyzer:
     def __find_smash_analysis_window(
         cls,
         hand_positions: list[Coordinate],
+        elbow_positions: list[Coordinate],
     ) -> tuple[int, int, int]:
         start_frame, _, end_frame = cls.find_acc_analysis_window(hand_positions)
         idx = np.argmin(np.asarray(hand_positions)[start_frame:end_frame, 1])
         new_peak = int(idx + start_frame)
         new_start = max(0, new_peak - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
-        new_end = min(
-            len(hand_positions) - 1, new_peak + IMPACT_FRAME_SEARCH_WINDOW_AFTER
+        new_end = int(
+            np.argmax(np.asarray(elbow_positions)[new_peak:end_frame, 1]) + new_peak
         )
         return new_start, new_peak, new_end
 
@@ -172,6 +173,37 @@ class VideoAnalyzer:
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
         final_end_frame = min(len(hand_positions), end_frame)
         return int(start_frame), int(peak_frame), int(final_end_frame)
+
+    @classmethod
+    def __find_lift_analysis_window(
+        cls,
+        hand_positions: list[Coordinate],
+        elbow_positions: list[Coordinate],
+    ) -> tuple[int, int, int]:
+        start_frame, peak_frame, end_frame = cls.find_acc_analysis_window(
+            hand_positions
+        )
+        sub_range_positions = hand_positions[int(start_frame) : int(end_frame)]
+        arr = np.asarray(sub_range_positions, dtype=np.float64)
+        if arr.size > 0:
+            y_values = arr[:, 1]
+            lowest_hand_relative_index = int(np.argmax(y_values))
+            peak_frame = start_frame + lowest_hand_relative_index
+
+        follow_through = np.asarray(
+            hand_positions[int(peak_frame) : int(end_frame) + 1],
+            dtype=np.float64,
+        )
+        if follow_through.size > 0:
+            # Lift finishes when the racket hand reaches its highest point
+            # after the low backswing, not when the elbow metric used by serve
+            # happens to peak.
+            highest_hand_relative_index = int(np.argmin(follow_through[:, 1]))
+            end_frame = int(peak_frame) + highest_hand_relative_index
+
+        start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
+        end_frame = max(int(peak_frame), min(len(hand_positions) - 1, int(end_frame)))
+        return int(start_frame), int(peak_frame), int(end_frame)
 
     @classmethod
     def find_footwork_patterns(
@@ -217,7 +249,7 @@ class VideoAnalyzer:
             return -1, -1, -1
 
         match skill:
-            case Skill.SERVE | Skill.LIFT:
+            case Skill.SERVE:
                 if hand_positions and elbow_positions:
                     return cls.__find_serve_analysis_window(
                         hand_positions, elbow_positions
@@ -225,9 +257,19 @@ class VideoAnalyzer:
                 cls.logger.error("At least one coordinate list should be provided")
                 return -1, -1, -1
 
+            case Skill.LIFT:
+                if hand_positions and elbow_positions:
+                    return cls.__find_lift_analysis_window(
+                        hand_positions, elbow_positions
+                    )
+                cls.logger.error("At least one coordinate list should be provided")
+                return -1, -1, -1
+
             case Skill.CLEAR | Skill.SMASH:
                 if hand_positions:
-                    return cls.__find_smash_analysis_window(hand_positions)
+                    return cls.__find_smash_analysis_window(
+                        hand_positions, elbow_positions
+                    )
 
             case Skill.FOOTWORK:
                 return -1, -1, -1
