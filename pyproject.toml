@@ -24,6 +24,8 @@ dependencies = [
     "torch>=2.5.1",
     "torchtyping>=0.1.5",
     "lap>=0.5.13",
+    "openai>=1.0.0",
+    "dotenv>=0.9.9",
 ]
 
 [project.optional-dependencies]

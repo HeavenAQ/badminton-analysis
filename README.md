@@ -1,28 +1,76 @@
 # Badminton Analysis Module
 
-Pose detection, body-centric normalization, batch angle extraction, and skill grading for badminton analysis.
+Pose extraction, angle computation, and rule-based / GPT-vision skill grading for badminton analysis.
 
 ## Current Progress
 
-Highlights distilled from recent git history and code state:
+**Implemented and working:**
+- Pose extraction from video via YOLO-based `VideoProcessor`
+- Analysis window detection via `VideoAnalyzer` (acceleration-based for serve/lift; lowest-hand-position-based for smash/clear)
+- Angle computation for 10 joint features (shoulder, elbow, knee, crotch, nose–shoulder–elbow)
+- Left/right → dominant/non-dominant normalization via label mirroring (`mirror_angles`) before stats aggregation
+- Rule-based graders for: **serve**, **smash**, **lift**, **forehand/backhand drive**, **forehand/backhand net kill**, **footwork** (DTW)
+- GPT-vision grader (`scripts/grade_students_gpt.py`) as an alternative to the rule-based pipeline — sends expert stats, reference images, and key frames to GPT-4.1
+- Statistical analysis scripts (`scripts/descrptive_analysis.py`) producing mean, std, CV, mean-|z| CSVs and two visualizations: temporal angle profiles and a CV heatmap
+- Student grading CLI: `grade-students` (outputs per-video CSV with total score and per-checkpoint breakdown)
 
-- Project initialized and legacy angle‑analysis code integrated with tests (2025‑08‑10).
-- Added CI workflows for PR assistant and code review (2025‑08‑10).
-- Major refactors to reduce redundancy and speed up calculations (2025‑08‑21).
-- Unit tests added and expanded across modules (2025‑08‑22).
-- Implemented body‑centric coordinate normalization and initial README (2025‑08‑23).
-- Grader framework refactored for future graders (2025‑08‑23).
-- Logging added and critical bugs fixed (2025‑08‑23).
-- Separated landmark storage for visualization vs. analysis (2025‑09‑06).
-- Improved type annotations and general code quality (2025‑09‑06).
-- Reorganized files in preparation for future updates (2025‑09‑06).
+## Skill Grading Checkpoints
 
-Functional status right now:
+Each skill's analysis window is divided into 5 key frames:
 
-- Body-centric normalization is implemented and covered by tests.
-- Batch angle extraction is available via `analyze-batch`.
-- Student grading is available via `grade-students`.
-- Skill graders are implemented for serve, smash, drive, net kill, and footwork.
+| Index | Position |
+|---|---|
+| 0 | Start of window |
+| 1 | Midpoint(start, peak) |
+| 2 | Peak |
+| 3 | Midpoint(peak, end) |
+| 4 | End of window |
+
+### Lift (3 checkpoints, 100 pts)
+
+| # | Name | English | Frame(s) | Pts | Joints |
+|---|---|---|---|---|---|
+| 1 | 手腕放置腰部放鬆預備 | Wrist at waist, relaxed ready | 0 | 10 | Dom. Shoulder (5), Non-dom. Shoulder (5) |
+| 2 | 手腕往後引拍 | Draw wrist back — backswing | 2 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
+| 3 | 手腕往前壓 | Press wrist forward — snap | 3 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
+
+### Smash (6 checkpoints, 100 pts)
+
+| # | Name | English | Frame(s) | Pts | Joints / criterion |
+|---|---|---|---|---|---|
+| 1 | 球拍舉至腰部預備 | Racket raised to waist | 0 | 10 | Dom. Shoulder (5), Non-dom. Shoulder (5) |
+| 2 | 轉身 | Body rotation | 0 → 1 | 10 | Non-dom. ankle X − dom. ankle X change > 10 px (binary) |
+| 3 | 雙手手肘平衡 | Both elbows balanced | 1 | 20 | Dom. Shoulder (10), Non-dom. Shoulder (10) |
+| 4 | 手肘往前轉至前方 | Dominant elbow drives forward | 2 | 20 | Dom. Shoulder (20) |
+| 5 | 手腕發力 | Wrist flick | 2 | 20 | Dom. Elbow (20) |
+| 6 | 慣用手肩膀往前轉 | Dominant shoulder rotates forward | 3 | 20 | Dom. Shoulder angle (10) + dom. shoulder X − non-dom. shoulder X > 5 px (10, binary) |
+
+### Serve (5 checkpoints / 6 sub-checks, 100 pts)
+
+| # | Name | English | Frame(s) | Pts | Joints / criterion |
+|---|---|---|---|---|---|
+| 1a | 雙手平舉 | Both arms raised | 0 | 10 | Dom. Shoulder (5, if ≥ 25°), Non-dom. Shoulder (5, if ≥ 25°) |
+| 1b | 將重心放至持拍腳 | Weight on racket foot | 0 | 10 | Dom. Crotch ≤ Non-dom. Crotch (binary) |
+| 2 | 重心轉移至非持拍腳 | Weight transfer to non-racket foot | 0 → 1 (lower), 1 → 3 (upper) | 20 | min(crotch displacement, eye/ear X displacement) |
+| 3 | 髖關節前旋 | Hip-axis rotation | 0 → 4 | 20 | Hip-axis angle change vs expert mean |
+| 4 | 持拍手手腕發力 | Dominant wrist flick | 3 | 20 | Dom. Elbow (20) |
+| 5 | 肩膀旋轉朝前 | Shoulder rotates forward | 4 | 20 | Dom. Shoulder (10), Dom. Shoulder–Elbow (10) |
+
+### Drive — forehand and backhand (3 checkpoints, 100 pts)
+
+| # | Name | English | Frame(s) | Pts | Joints |
+|---|---|---|---|---|---|
+| 1 | 手腕放置腰部放鬆預備 | Wrist at waist, relaxed ready | 0 | 10 | Dom. Shoulder (5), Non-dom. Shoulder (5) |
+| 2 | 手腕往後引拍 | Draw wrist back — backswing | 2 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
+| 3 | 手腕往前壓 | Press wrist forward | 3 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
+
+### Net Kill — forehand and backhand (3 checkpoints, 100 pts)
+
+| # | Name | English | Frame(s) | Pts | Joints |
+|---|---|---|---|---|---|
+| 1 | 手腕放置腰部放鬆預備 | Wrist at waist, relaxed ready | 0 | 10 | Dom. Shoulder (5), Non-dom. Shoulder (5) |
+| 2 | 手腕往後引拍 | Draw wrist back — backswing | 2 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
+| 3 | 手腕往前壓 | Press wrist forward | 3 | 45 | Dom. Shoulder (22.5), Dom. Elbow (22.5) |
 
 ## Usage
 
