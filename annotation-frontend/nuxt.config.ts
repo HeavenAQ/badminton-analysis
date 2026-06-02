@@ -11,7 +11,9 @@ export default defineNuxtConfig({
     gcpProjectId: process.env.GCP_PROJECT_ID || 'moe-linebot-2025',
     firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || 'badminton-annotations',
     firestoreCollection: process.env.FIRESTORE_COLLECTION || 'badminton_vlm_annotations',
-    public: {}
+    public: {
+      annotationImageBaseUrl: process.env.NUXT_PUBLIC_ANNOTATION_IMAGE_BASE_URL || ''
+    }
   },
   modules: ['@nuxtjs/google-fonts'],
   googleFonts: {
@@ -21,6 +23,9 @@ export default defineNuxtConfig({
   },
   nitro: {
     preset: isNetlifyBuild ? 'netlify' : 'node-server',
+    externals: {
+      inline: ['@vue/devtools-api', 'vue-router']
+    },
     routeRules: {
       '/annotation-images/**': {
         headers: {

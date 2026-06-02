@@ -2,55 +2,55 @@
   <main class="page">
     <header class="topbar">
       <div>
-        <h1>Badminton Expert Annotation</h1>
+        <h1>羽球專家標註系統</h1>
         <p>{{ statusText }}</p>
       </div>
       <div class="top-actions">
-        <input v-model.trim="annotator" class="annotator" placeholder="Annotator name" />
-        <button @click="reload" :disabled="pending">Reload</button>
+        <input v-model.trim="annotator" class="annotator" placeholder="標註者姓名" />
+        <button @click="reload" :disabled="pending">重新載入</button>
       </div>
     </header>
 
     <section class="filters">
       <label>
-        Skill
+        技術
         <select v-model="filters.skill" @change="reload">
-          <option value="">All</option>
-          <option v-for="skill in facets?.skills || []" :key="skill" :value="skill">{{ skill }}</option>
+          <option value="">全部</option>
+          <option v-for="skill in facets?.skills || []" :key="skill" :value="skill">{{ skillLabel(skill) }}</option>
         </select>
       </label>
       <label>
-        Key Frame
+        關鍵影格
         <select v-model="filters.keyFrame" @change="reload">
-          <option value="">All</option>
+          <option value="">全部</option>
           <option v-for="keyFrame in facets?.keyFrames || []" :key="keyFrame" :value="keyFrame">
-            {{ keyFrame }}
+            {{ keyFrameLabel(keyFrame) }}
           </option>
         </select>
       </label>
       <label>
-        Cohort
+        組別
         <select v-model="filters.cohort" @change="reload">
-          <option value="">All</option>
-          <option v-for="cohort in facets?.cohorts || []" :key="cohort" :value="cohort">{{ cohort }}</option>
+          <option value="">全部</option>
+          <option v-for="cohort in facets?.cohorts || []" :key="cohort" :value="cohort">{{ cohortLabel(cohort) }}</option>
         </select>
       </label>
       <label>
-        Source
+        資料來源
         <select v-model="filters.sourceDataset" @change="reload">
-          <option value="">All</option>
+          <option value="">全部</option>
           <option v-for="source in facets?.sourceDatasets || []" :key="source" :value="source">
-            {{ source }}
+            {{ sourceLabel(source) }}
           </option>
         </select>
       </label>
       <label>
-        Annotation
+        標註狀態
         <select v-model="filters.annotationStatus" @change="reload">
-          <option value="">All</option>
-          <option value="annotated">Annotated</option>
-          <option value="in_progress">In progress</option>
-          <option value="unannotated">Not annotated</option>
+          <option value="">全部</option>
+          <option value="annotated">已完成</option>
+          <option value="in_progress">標註中</option>
+          <option value="unannotated">尚未標註</option>
         </select>
       </label>
     </section>
@@ -60,12 +60,12 @@
       <span class="spinner"></span>
       <strong>{{ loadingText }}</strong>
     </section>
-    <section v-else-if="!currentSample" class="message">No samples match these filters.</section>
+    <section v-else-if="!currentSample" class="message">沒有符合篩選條件的樣本。</section>
 
     <section v-else class="workspace">
       <div class="progress-card">
         <div>
-          <span>Current sample</span>
+          <span>目前樣本</span>
           <strong>{{ absolutePosition }} / {{ filteredCount }}</strong>
         </div>
         <div class="progress-track">
@@ -77,8 +77,8 @@
         <div class="sample-list-header">
           <strong>{{ pageStatus }}</strong>
           <div>
-            <button type="button" @click="previousPage" :disabled="offset === 0">Prev</button>
-            <button type="button" @click="nextPage" :disabled="!hasNextPage">Next</button>
+            <button type="button" @click="previousPage" :disabled="offset === 0">上一頁</button>
+            <button type="button" @click="nextPage" :disabled="!hasNextPage">下一頁</button>
           </div>
         </div>
         <div class="sample-list-scroll">
@@ -89,8 +89,11 @@
             @click="selectSample(index)"
           >
             <span>{{ index + 1 + offset }}</span>
-            <strong>{{ sample.metadata.skill }} / KF{{ sample.metadata.key_frame_index }}</strong>
-            <small>{{ sample.metadata.video_file }} · {{ sample.metadata.neighbor_offset }}</small>
+            <strong>{{ skillLabel(sample.metadata.skill) }} / 關鍵影格 {{ sample.metadata.key_frame_index + 1 }}/5</strong>
+            <small>
+              原始影格 {{ sample.metadata.frame_index }} · 位移 {{ sample.metadata.neighbor_offset }} ·
+              {{ sample.metadata.video_file }}
+            </small>
             <em :class="annotationBadgeClass(sample.sample_id)">
               {{ annotationBadgeLabel(sample.sample_id) }}
             </em>
@@ -99,6 +102,18 @@
       </aside>
 
       <section class="viewer">
+        <div class="frame-context">
+          <div>
+            <span>目前顯示影格</span>
+            <strong>{{ frameTitle }}</strong>
+            <small>{{ frameSubtitle }}</small>
+          </div>
+          <div class="frame-pills">
+            <span>{{ keyFramePositionLabel }}</span>
+            <span>{{ neighborOffsetLabel }}</span>
+            <span>原始影格 {{ currentSample.metadata.frame_index }}</span>
+          </div>
+        </div>
         <div class="image-wrap" :class="{ loading: imagePending }">
           <img
             :key="currentSample.sample_id"
@@ -108,65 +123,69 @@
             @load="handleImageLoaded"
             @error="handleImageError"
           />
+          <div class="image-frame-chip">
+            <strong>{{ keyFramePositionLabel }}</strong>
+            <span>{{ neighborOffsetLabel }} · 原始影格 {{ currentSample.metadata.frame_index }}</span>
+          </div>
           <div v-if="imagePending" class="image-loader" aria-live="polite">
             <span class="spinner"></span>
-            <strong>Loading frame</strong>
-            <small>{{ currentSample.metadata.video_file }} · KF{{ currentSample.metadata.key_frame_index }}</small>
+            <strong>正在載入影格</strong>
+            <small>{{ currentSample.metadata.video_file }} · 關鍵影格 {{ currentSample.metadata.key_frame_index + 1 }}/5</small>
           </div>
           <div v-else-if="imageLoadError" class="image-loader error-state" aria-live="polite">
-            <strong>Image failed to load</strong>
+            <strong>影像載入失敗</strong>
             <small>{{ imageLoadError }}</small>
-            <button type="button" @click="retryImage">Retry</button>
+            <button type="button" @click="retryImage">重試</button>
           </div>
         </div>
         <div class="meta-grid">
-          <span>Skill: <strong>{{ currentSample.metadata.skill }}</strong></span>
-          <span>Key frame: <strong>{{ currentSample.metadata.key_frame_name }}</strong></span>
-          <span>Offset: <strong>{{ currentSample.metadata.neighbor_offset }}</strong></span>
-          <span>Frame: <strong>{{ currentSample.metadata.frame_index }}</strong></span>
-          <span>Hand: <strong>{{ currentSample.metadata.handedness }}</strong></span>
-          <span>Source: <strong>{{ currentSample.metadata.source_dataset }}</strong></span>
+          <span>技術：<strong>{{ skillLabel(currentSample.metadata.skill) }}</strong></span>
+          <span>關鍵影格：<strong>{{ keyFrameLabel(currentSample.metadata.key_frame_name) }}</strong></span>
+          <span>前後位移：<strong>{{ neighborOffsetLabel }}</strong></span>
+          <span>原始影格編號：<strong>{{ currentSample.metadata.frame_index }}</strong></span>
+          <span>慣用手：<strong>{{ handednessLabel(currentSample.metadata.handedness) }}</strong></span>
+          <span>來源：<strong>{{ sourceLabel(currentSample.metadata.source_dataset) }}</strong></span>
         </div>
         <details class="angles">
-          <summary>Angles metadata</summary>
+          <summary>角度資料</summary>
           <div>
             <span v-for="(value, name) in currentSample.metadata.angles" :key="name">
-              {{ name }}: <strong>{{ Number(value).toFixed(1) }}</strong>
+              {{ angleLabel(String(name)) }}：<strong>{{ Number(value).toFixed(1) }}</strong>
             </span>
           </div>
         </details>
       </section>
 
       <form class="annotation" @submit.prevent="saveCurrent">
-        <h2>Expert Label</h2>
+        <h2>專家標註</h2>
         <label>
-          Score
-          <input v-model.number="form.score" type="number" min="0" max="10" step="0.5" placeholder="0-10" />
+          分數
+          <input v-model.number="form.score" type="number" min="0" max="10" step="0.5" placeholder="0 到 10 分" />
         </label>
         <label>
-          Feedback
-          <textarea v-model.trim="form.feedback" rows="5" placeholder="What is technically correct or incorrect?"></textarea>
+          技術回饋
+          <textarea v-model.trim="form.feedback" rows="5" placeholder="這個影格中動作正確或需要修正的地方"></textarea>
         </label>
         <label>
-          Correction suggestion
-          <textarea v-model.trim="form.correction_suggestion" rows="4" placeholder="Actionable coaching cue"></textarea>
+          修正建議
+          <textarea v-model.trim="form.correction_suggestion" rows="4" placeholder="給選手的具體修正提示"></textarea>
         </label>
         <label>
-          Use for training
+          是否用於訓練
           <select v-model="form.usable_for_training">
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
+            <option value="yes">是</option>
+            <option value="no">否</option>
           </select>
         </label>
         <label>
-          Notes
-          <textarea v-model.trim="form.notes" rows="3" placeholder="Occlusion, tracking issue, ambiguity"></textarea>
+          備註
+          <textarea v-model.trim="form.notes" rows="3" placeholder="遮擋、骨架追蹤問題或判斷不明確之處"></textarea>
         </label>
 
         <div class="form-actions">
-          <button type="button" @click="previousSample" :disabled="!canGoPrevious">Previous</button>
-          <button type="submit" class="primary" :disabled="saving">{{ saving ? 'Saving...' : 'Save & Next' }}</button>
-          <button type="button" @click="nextSample" :disabled="!canGoNext">Skip</button>
+          <button type="button" @click="previousSample" :disabled="!canGoPrevious">上一張</button>
+          <button type="submit" class="primary" :disabled="saving">{{ saving ? '儲存中...' : '儲存並下一張' }}</button>
+          <button type="button" @click="nextSample" :disabled="!canGoNext">跳過</button>
         </div>
         <p v-if="saveStatus" class="save-status">{{ saveStatus }}</p>
       </form>
@@ -181,6 +200,11 @@ const PAGE_LIMIT = 200
 const STATUS_BATCH_SIZE = 1000
 type AnnotationState = 'unannotated' | 'in_progress' | 'annotated'
 
+const config = useRuntimeConfig()
+const annotationImageBaseUrl = computed(() => {
+  const value = String(config.public.annotationImageBaseUrl || '').trim()
+  return value.replace(/\/$/, '')
+})
 const annotator = useCookie('badminton_annotator', { default: () => '' })
 const offset = ref(0)
 const currentIndex = ref(0)
@@ -231,27 +255,110 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, (absolutePosition.value / filteredCount.value) * 100))
 })
 const pageStatus = computed(() => {
-  if (!filteredCount.value) return '0 samples'
+  if (!filteredCount.value) return '0 筆樣本'
   const start = offset.value + 1
   const end = offset.value + samples.value.length
-  return `${start}-${end} of ${filteredCount.value}`
+  return `第 ${start}-${end} 筆，共 ${filteredCount.value} 筆`
+})
+const keyFramePositionLabel = computed(() => {
+  if (!currentSample.value) return '沒有影格'
+  return `關鍵影格 ${currentSample.value.metadata.key_frame_index + 1}/5`
+})
+const neighborOffsetLabel = computed(() => {
+  if (!currentSample.value) return ''
+  const offsetValue = currentSample.value.metadata.neighbor_offset
+  if (offsetValue === 0) return '偵測到的關鍵影格'
+  return offsetValue > 0 ? `關鍵影格後 ${offsetValue} 格` : `關鍵影格前 ${Math.abs(offsetValue)} 格`
+})
+const frameTitle = computed(() => {
+  if (!currentSample.value) return ''
+  return `${keyFrameLabel(currentSample.value.metadata.key_frame_name)} · ${neighborOffsetLabel.value}`
+})
+const frameSubtitle = computed(() => {
+  if (!currentSample.value) return ''
+  const meta = currentSample.value.metadata
+  return `${skillLabel(meta.skill)} · ${handednessLabel(meta.handedness)} · ${meta.video_file}`
 })
 const statusText = computed(() => {
-  const total = facets.value?.total ? `${facets.value.total} samples` : 'Waiting for manifest'
-  return `${total} · Firestore writes go through the Nuxt server`
+  const total = facets.value?.total ? `共 ${facets.value.total} 筆樣本` : '等待標註清單'
+  return `${total} · 標註結果會透過伺服器寫入 Firestore`
 })
 const loadingText = computed(() => {
-  if (statusPending.value) return 'Checking annotation status...'
-  return 'Loading samples...'
+  if (statusPending.value) return '正在檢查標註狀態...'
+  return '正在載入樣本...'
 })
 
+function skillLabel(skill: string) {
+  const labels: Record<string, string> = {
+    serve: '發球',
+    clear: '高遠球',
+    smash: '殺球',
+    lift: '挑球'
+  }
+  return labels[skill] || skill
+}
+
+function keyFrameLabel(keyFrame: string) {
+  const labels: Record<string, string> = {
+    key_frame_0_start: '動作起始',
+    key_frame_1_mid_start_peak: '起始到擊球點中段',
+    key_frame_2_peak: '擊球點／最高點',
+    key_frame_3_mid_peak_end: '擊球點到結束中段',
+    key_frame_4_end: '動作結束'
+  }
+  return labels[keyFrame] || keyFrame
+}
+
+function cohortLabel(cohort: string) {
+  const labels: Record<string, string> = {
+    expert: '專家',
+    beginner: '初學者'
+  }
+  return labels[cohort] || cohort
+}
+
+function sourceLabel(source: string) {
+  const labels: Record<string, string> = {
+    scoring_videos: '評分影片',
+    'training_videos/nstc': 'NSTC 專家影片'
+  }
+  return labels[source] || source
+}
+
+function handednessLabel(handedness: string) {
+  const labels: Record<string, string> = {
+    left: '左手',
+    right: '右手'
+  }
+  return labels[handedness] || handedness
+}
+
+function angleLabel(angleName: string) {
+  const labels: Record<string, string> = {
+    'Left Crotch Angle': '左髖角度',
+    'Right Crotch Angle': '右髖角度',
+    'Left Elbow Angle': '左手肘角度',
+    'Right Elbow Angle': '右手肘角度',
+    'Left Knee Angle': '左膝角度',
+    'Right Knee Angle': '右膝角度',
+    'Left Shoulder Angle': '左肩角度',
+    'Right Shoulder Angle': '右肩角度',
+    'Nose Left Shoulder Elbow Angle': '鼻子-左肩-左肘角度',
+    'Nose Right Shoulder Elbow Angle': '鼻子-右肩-右肘角度'
+  }
+  return labels[angleName] || angleName
+}
+
 function imageUrl(path: string) {
-  const baseUrl = `/annotation-images/${path}`
+  const baseUrl = staticImageUrl(path)
   return imageRetryToken.value ? `${baseUrl}?retry=${imageRetryToken.value}` : baseUrl
 }
 
 function staticImageUrl(path: string) {
-  return `/annotation-images/${path}`
+  const normalizedPath = path.replace(/^\//, '')
+  return annotationImageBaseUrl.value
+    ? `${annotationImageBaseUrl.value}/${normalizedPath}`
+    : `/annotation-images/${normalizedPath}`
 }
 
 function startImageLoad() {
@@ -270,7 +377,7 @@ function handleImageLoaded() {
 function handleImageError() {
   imagePending.value = false
   imageReady.value = false
-  imageLoadError.value = 'Check that annotation assets were prepared and the image exists in public/annotation-images.'
+  imageLoadError.value = '圖片載入失敗，請確認標註影像已完成上傳或本機資料夾已準備完成。'
 }
 
 function retryImage() {
@@ -315,7 +422,7 @@ async function hydrateForm(sample: AnnotationSample) {
     form.notes = saved.notes || ''
     annotator.value = saved.annotator || annotator.value
   } catch (error) {
-    saveStatus.value = error instanceof Error ? error.message : 'Could not load saved annotation.'
+    saveStatus.value = error instanceof Error ? error.message : '無法載入已儲存的標註。'
   }
 }
 
@@ -328,7 +435,7 @@ async function reload() {
   try {
     await setCurrentPage(0)
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : 'Could not load samples.'
+    loadError.value = error instanceof Error ? error.message : '無法載入樣本。'
   } finally {
     pending.value = false
   }
@@ -358,7 +465,7 @@ async function nextPage() {
   try {
     await setCurrentPage(offset.value + PAGE_LIMIT)
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : 'Could not load next page.'
+    loadError.value = error instanceof Error ? error.message : '無法載入下一頁。'
   } finally {
     pending.value = false
   }
@@ -371,7 +478,7 @@ async function previousPage() {
   try {
     await setCurrentPage(Math.max(0, offset.value - PAGE_LIMIT))
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : 'Could not load previous page.'
+    loadError.value = error instanceof Error ? error.message : '無法載入上一頁。'
   } finally {
     pending.value = false
   }
@@ -413,10 +520,10 @@ function annotationStateFromSaved(saved: SavedAnnotation | null): AnnotationStat
 
 function annotationBadgeLabel(sampleId: string) {
   const status = annotationStatusById.value[sampleId]
-  if (status === 'annotated') return 'Annotated'
-  if (status === 'in_progress') return 'In progress'
-  if (status === 'unannotated') return 'Open'
-  return 'Unchecked'
+  if (status === 'annotated') return '已完成'
+  if (status === 'in_progress') return '標註中'
+  if (status === 'unannotated') return '尚未標註'
+  return '未檢查'
 }
 
 function annotationBadgeClass(sampleId: string) {
@@ -473,7 +580,7 @@ async function loadStaticManifest() {
     loadError.value =
       error instanceof Error
         ? error.message
-        : 'Could not load /annotation_template.jsonl. Run prepare:assets before deployment.'
+        : '無法載入 /annotation_template.jsonl。部署前請先執行 prepare:assets。'
   } finally {
     pending.value = false
   }
@@ -516,15 +623,15 @@ async function saveCurrent() {
       ...annotationStatusById.value,
       [currentSample.value.sample_id]: savedState
     }
-    saveStatus.value = 'Saved'
+    saveStatus.value = '已儲存'
     if (filters.annotationStatus && filters.annotationStatus !== savedState) {
       await setCurrentPage(offset.value, currentIndex.value)
-      saveStatus.value = 'Saved'
+      saveStatus.value = '已儲存'
       return
     }
     nextSample()
   } catch (error) {
-    saveStatus.value = error instanceof Error ? error.message : 'Save failed.'
+    saveStatus.value = error instanceof Error ? error.message : '儲存失敗。'
   } finally {
     saving.value = false
   }
@@ -793,6 +900,53 @@ label {
   padding: 12px;
 }
 
+.frame-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.frame-context span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.frame-context strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 18px;
+}
+
+.frame-context small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.frame-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.frame-pills span {
+  border: 1px solid #b7c8c4;
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: #fff;
+  color: #0f766e;
+  text-transform: none;
+}
+
 .image-wrap {
   position: relative;
   display: grid;
@@ -822,6 +976,30 @@ label {
     #111827;
   background-size: 220px 100%, 100% 100%;
   animation: shimmer 1.15s linear infinite;
+}
+
+.image-frame-chip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: grid;
+  gap: 2px;
+  max-width: min(420px, calc(100% - 24px));
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: #fff;
+  background: rgb(15 23 42 / 0.82);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.22);
+}
+
+.image-frame-chip strong {
+  font-size: 14px;
+}
+
+.image-frame-chip span {
+  color: rgb(255 255 255 / 0.78);
+  font-size: 12px;
 }
 
 .image-loader {

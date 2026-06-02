@@ -1,14 +1,11 @@
 [build]
-  command = "npm run build"
+  command = "npm run build:netlify"
   publish = ".output/public"
 
 [build.environment]
+  NUXT_PUBLIC_ANNOTATION_IMAGE_BASE_URL = "https://storage.googleapis.com/badminton-annotation-images-moe-2025/annotation-images"
+  NITRO_PRESET = "netlify"
   NODE_VERSION = "22"
 
 [functions]
   node_bundler = "esbuild"
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200

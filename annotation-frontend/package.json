@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nuxt dev --host 127.0.0.1 --no-fork",
     "build": "nuxt build",
+    "build:netlify": "NITRO_PRESET=netlify SKIP_ANNOTATION_IMAGE_COPY=1 nuxt build && SKIP_ANNOTATION_IMAGE_COPY=1 node scripts/copy-public-assets.mjs",
     "prepare:assets": "cd .. && uv run python scripts/prepare_netlify_annotation_assets.py",
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck"
