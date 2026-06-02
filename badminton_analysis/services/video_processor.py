@@ -25,12 +25,18 @@ from badminton_analysis.services.pose_detector import PoseDetector
 class VideoProcessor:
     """Extracts pose/position data from a video. Does not grade."""
 
-    def __init__(self, video_path: str, out_filename: str, output_folder: str) -> None:
+    def __init__(
+        self,
+        video_path: str,
+        out_filename: str,
+        output_folder: str,
+        pose_detector: PoseDetector | None = None,
+    ) -> None:
         self.video_path = video_path
         self.out_filename = out_filename
         self.output_folder = output_folder
         self.logger = Logger(self.__class__.__name__)
-        self.pose_detector = PoseDetector()
+        self.pose_detector = pose_detector or PoseDetector()
         self.time_intervals: list[float] = []
         self.output_path = os.path.join(self.output_folder, self.out_filename)
 

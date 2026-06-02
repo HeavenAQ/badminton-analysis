@@ -26,6 +26,7 @@ dependencies = [
     "lap>=0.5.13",
     "openai>=1.0.0",
     "dotenv>=0.9.9",
+    "google-cloud-firestore>=2.21.0",
 ]
 
 [project.optional-dependencies]
