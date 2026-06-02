@@ -1,5 +1,10 @@
+const isNetlifyBuild = process.env.NETLIFY === 'true' || process.env.NITRO_PRESET === 'netlify'
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
+  devtools: {
+    enabled: process.env.NUXT_DEVTOOLS === 'true'
+  },
   css: ['~/assets/main.css'],
   runtimeConfig: {
     annotationRoot: process.env.ANNOTATION_ROOT || '../llm-annotations',
@@ -15,7 +20,7 @@ export default defineNuxtConfig({
     }
   },
   nitro: {
-    preset: 'netlify',
+    preset: isNetlifyBuild ? 'netlify' : 'node-server',
     routeRules: {
       '/annotation-images/**': {
         headers: {

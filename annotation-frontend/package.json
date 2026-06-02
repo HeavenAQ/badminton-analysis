@@ -3,20 +3,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "nuxt dev --host 0.0.0.0",
+    "dev": "nuxt dev --host 127.0.0.1 --no-fork",
     "build": "nuxt build",
     "prepare:assets": "cd .. && uv run python scripts/prepare_netlify_annotation_assets.py",
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck"
   },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
-    "@nuxtjs/google-fonts": "^3.2.0",
     "@google-cloud/firestore": "^7.11.0",
-    "nuxt": "^3.15.0",
+    "@nuxtjs/google-fonts": "^3.2.0",
+    "nuxt": "3.15.4",
     "vue": "^3.5.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
     "vue-tsc": "^2.2.0"
+  },
+  "overrides": {
+    "nitropack": "2.10.4"
   }
 }

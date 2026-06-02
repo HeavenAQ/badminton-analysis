@@ -4,6 +4,12 @@ Nuxt app for expert annotation of generated `llm-annotations` samples.
 
 ## Setup
 
+Use Node 22 LTS. This is the same runtime version configured for Netlify.
+
+```bash
+nvm use
+```
+
 1. Create a Firestore database for annotations, for example `badminton-annotations`.
 2. Copy `.env.example` to `.env` and keep the server-side project/database settings.
 3. Make sure local Application Default Credentials can access Firestore:
