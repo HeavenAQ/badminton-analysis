@@ -210,6 +210,7 @@ def iter_nstc_video_jobs(nstc_root: Path) -> list[VideoJob]:
         return []
 
     jobs: list[VideoJob] = []
+    handedness_groups = {"left", "right"}
     for skill_dir in sorted(p for p in nstc_root.iterdir() if p.is_dir()):
         skill = SKILL_FOLDER_MAP.get(skill_dir.name.lower())
         if skill is None:
@@ -217,6 +218,10 @@ def iter_nstc_video_jobs(nstc_root: Path) -> list[VideoJob]:
             continue
 
         for group_dir in sorted(p for p in skill_dir.iterdir() if p.is_dir()):
+            if group_dir.name.lower() not in handedness_groups:
+                print(f"Skipping NSTC non-handedness folder: {group_dir}")
+                continue
+
             for video_path in sorted(group_dir.iterdir()):
                 if video_path.is_file() and video_path.suffix.lower() in VIDEO_EXTENSIONS:
                     jobs.append(
