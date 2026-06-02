@@ -1,0 +1,27 @@
+export default defineNuxtConfig({
+  compatibilityDate: '2025-01-01',
+  css: ['~/assets/main.css'],
+  runtimeConfig: {
+    annotationRoot: process.env.ANNOTATION_ROOT || '../llm-annotations',
+    gcpProjectId: process.env.GCP_PROJECT_ID || 'moe-linebot-2025',
+    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || 'badminton-annotations',
+    firestoreCollection: process.env.FIRESTORE_COLLECTION || 'badminton_vlm_annotations',
+    public: {}
+  },
+  modules: ['@nuxtjs/google-fonts'],
+  googleFonts: {
+    families: {
+      Inter: [400, 500, 600, 700]
+    }
+  },
+  nitro: {
+    preset: 'netlify',
+    routeRules: {
+      '/annotation-images/**': {
+        headers: {
+          'cache-control': 'public, max-age=3600'
+        }
+      }
+    }
+  }
+})
