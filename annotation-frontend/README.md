@@ -26,6 +26,7 @@ npm run dev
 ```
 
 The app reads `../llm-annotations/annotation_template.jsonl` by default and serves images from `../llm-annotations`.
+For local Firestore writes, set `FIRESTORE_SERVICE_ACCOUNT_PATH` in `.env` to a service account JSON file outside the repo.
 
 For Netlify, set `FIRESTORE_SERVICE_ACCOUNT_JSON` or `FIRESTORE_SERVICE_ACCOUNT_BASE64`
 as a secret environment variable in the Netlify UI.

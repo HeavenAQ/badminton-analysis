@@ -19,6 +19,12 @@ Required server config keys:
 - `FIRESTORE_DATABASE_ID=badminton-annotations`
 - `FIRESTORE_COLLECTION=badminton_vlm_annotations`
 
+For local dev, keep the service account JSON outside the repo and point to it:
+
+- `FIRESTORE_SERVICE_ACCOUNT_PATH=/private/tmp/badminton-annotation-netlify-key.json`
+
+The app also supports `GOOGLE_APPLICATION_CREDENTIALS` if you already use that for local Google Cloud tools.
+
 For Netlify, add one secret credential env var in the Netlify UI:
 
 - `FIRESTORE_SERVICE_ACCOUNT_JSON` with the full service account JSON, or
