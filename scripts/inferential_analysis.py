@@ -39,7 +39,7 @@ def get_target_indices(
     ]
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate expert stability statistics for badminton skills",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -441,9 +441,9 @@ def plot_per_expert_boxplots(
     print(f"Saved: {out}")
 
 
-def _isnan(val) -> bool:
+def _isnan(val: object) -> bool:
     try:
-        return np.isnan(float(val))
+        return bool(np.isnan(float(val)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return True
 
@@ -454,7 +454,7 @@ def _hex_to_rgba(hex_color: str, alpha: float = 1.0) -> tuple:
     return (r, g, b, alpha)
 
 
-def main(argv: Sequence[str] | None = None):
+def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

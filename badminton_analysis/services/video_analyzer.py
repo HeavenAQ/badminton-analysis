@@ -266,10 +266,12 @@ class VideoAnalyzer:
                 return -1, -1, -1
 
             case Skill.CLEAR | Skill.SMASH:
-                if hand_positions:
+                if hand_positions and elbow_positions:
                     return cls.__find_smash_analysis_window(
                         hand_positions, elbow_positions
                     )
+                cls.logger.error("At least one coordinate list should be provided")
+                return -1, -1, -1
 
             case Skill.FOOTWORK:
                 return -1, -1, -1

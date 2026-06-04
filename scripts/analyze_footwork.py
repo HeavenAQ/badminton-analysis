@@ -1,7 +1,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, Literal, TypedDict
 
 import cv2
 import matplotlib.pyplot as plt
@@ -83,7 +83,7 @@ def mean_curve(series_list: list[np.ndarray], max_length: int) -> np.ndarray:
     stacked = np.full((len(series_list), max_length), np.nan, dtype=np.float64)
     for row, series in enumerate(series_list):
         stacked[row, : len(series)] = series
-    return np.nanmean(stacked, axis=0)
+    return np.nanmean(stacked, axis=0)  # type: ignore[no-any-return]
 
 
 def find_flip_frames(
@@ -283,11 +283,11 @@ def plot_trajectories(
         raise ValueError("No valid expert trajectories were extracted.")
 
     fig, axes = plt.subplots(4, 2, figsize=(16, 20))
-    xy_specs = [
+    xy_specs: list[tuple[Any, Literal["left_ankle", "right_ankle"], str, str, str]] = [
         (axes[0, 0], "left_ankle", "Left Ankle Trajectory", "X", "Y"),
         (axes[0, 1], "right_ankle", "Right Ankle Trajectory", "X", "Y"),
     ]
-    distance_specs = [
+    distance_specs: list[tuple[Any, Literal["left_ankle", "right_ankle"], str, str, str]] = [
         (
             axes[1, 0],
             "left_ankle",
@@ -307,7 +307,7 @@ def plot_trajectories(
     velocity_ax = axes[2, 1]
     acceleration_ax = axes[3, 0]
     axes[3, 1].axis("off")
-    colors = plt.cm.tab10(np.linspace(0, 1, max(len(trajectories), 1)))
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(trajectories), 1)))  # type: ignore[attr-defined]
 
     for color, (expert_name, trajectory) in zip(
         colors, trajectories.items(), strict=False

@@ -22,6 +22,7 @@ from openai import OpenAI
 
 from badminton_analysis.models.types import (
     COCOKeypoints,
+    CoordinateDict,
     GradingDetail,
     GradingOutcome,
     Handedness,
@@ -360,7 +361,7 @@ def _grade_with_gpt(
     system_content: list[dict[str, Any]],
     user_content: list[dict[str, Any]],
 ) -> GradingOutcome:
-    response = client.chat.completions.create(
+    response = client.chat.completions.create(  # type: ignore[call-overload]
         model=GPT_MODEL,
         response_format={"type": "json_object"},
         messages=[
@@ -465,7 +466,7 @@ def grade_videos_in_dir(
             dom_hip = _dominant_hip_kp(handedness)
             ndom_hip = _non_dominant_hip_kp(handedness)
 
-            def _line_angle(frame, kp_a, kp_b):
+            def _line_angle(frame: CoordinateDict, kp_a: COCOKeypoints, kp_b: COCOKeypoints) -> float:
                 dy = float(frame[kp_b][1] - frame[kp_a][1])
                 dx = float(frame[kp_b][0] - frame[kp_a][0])
                 return math.degrees(math.atan2(dy, dx))

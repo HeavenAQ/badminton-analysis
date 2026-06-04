@@ -24,6 +24,8 @@ class ServeGrader(Grader):
         self.mean.columns = [0, 1, 2, 3, 4]
         self.std.columns = [0, 1, 2, 3, 4]
 
+        self.hip_rotation_mean: float | None = None
+        self.hip_rotation_std: float | None = None
         rot_path = self.data_dir / "rotation_stats.csv"
         if rot_path.exists():
             rot = pd.read_csv(rot_path).set_index("feature")
@@ -31,11 +33,7 @@ class ServeGrader(Grader):
                 self.hip_rotation_mean = float(rot.loc["Hip Line Rotation CP3", "mean"])
                 self.hip_rotation_std = float(rot.loc["Hip Line Rotation CP3", "std"])
             except KeyError:
-                self.hip_rotation_mean = None
-                self.hip_rotation_std = None
-        else:
-            self.hip_rotation_mean = None
-            self.hip_rotation_std = None
+                pass
 
     def _rotation_grader(self, max_grade: float, rotation_deg: float, mean: float, std: float) -> float:
         """One-tailed: full credit when rotation >= expert mean, Gaussian decay below."""
@@ -114,8 +112,10 @@ class ServeGrader(Grader):
         end_angle = hip_line_angle(landmark_list[end_frame])
         rotation_deg = abs((end_angle - start_angle + 180) % 360 - 180)
 
-        if self.hip_rotation_mean is not None:
-            return self._rotation_grader(20, rotation_deg, self.hip_rotation_mean, self.hip_rotation_std)
+        hip_mean = self.hip_rotation_mean
+        hip_std = self.hip_rotation_std
+        if hip_mean is not None and hip_std is not None:
+            return self._rotation_grader(20, rotation_deg, hip_mean, hip_std)
         return 20.0 if rotation_deg > 10 else 0.0
 
     def grade_checkpoint_4(self, angles: AngleDicts, frame_idx: int) -> float:
