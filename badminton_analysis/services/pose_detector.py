@@ -1,5 +1,5 @@
 import time
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import cv2
 import torch
@@ -46,7 +46,8 @@ class PoseDetector:
 
         # Move model to the selected device
         try:
-            self.model.to(self.device)
+            if self.model is not None:
+                self.model.to(self.device)
         except Exception:
             # In case Ultralytics handles device internally, keep a safe fallback
             self.device = "cpu"
@@ -108,7 +109,7 @@ class PoseDetector:
             if YOLO is None:
                 raise RuntimeError("Pose model is not initialized and YOLO unavailable")
             self.model = YOLO("yolo11m-pose.pt")
-        return self.model.track(img, conf=self.min_detection_confidence, persist=True, verbose=False)
+        return cast(list[Any], self.model.track(img, conf=self.min_detection_confidence, persist=True, verbose=False))
 
     def get_2d_landmarks(self, results: list[Results]) -> CoordinateDict | None:
         if not results:

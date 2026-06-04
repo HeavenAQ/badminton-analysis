@@ -56,7 +56,7 @@ def load_firestore_annotations(
     client = firestore.Client(project=project, database=database)
     annotations: dict[str, dict[str, Any]] = {}
     for doc in client.collection(collection).stream():
-        data = doc.to_dict()
+        data = doc.to_dict() or {}
         sample_id = str(data.get("sample_id") or doc.id)
         annotations[sample_id] = data
     return annotations

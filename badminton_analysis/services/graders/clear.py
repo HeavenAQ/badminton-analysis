@@ -20,6 +20,13 @@ _TRUNK_LEAN_THRESHOLD = 0.08
 
 @final
 class ClearGrader(Grader):
+    mean: pd.DataFrame
+    std: pd.DataFrame
+    hip_rotation_mean: float | None
+    hip_rotation_std: float | None
+    shoulder_rotation_mean: float | None
+    shoulder_rotation_std: float | None
+
     def __init__(self, handedness: Handedness):
         super().__init__(handedness)
         self.data_dir = self.data_dir / "clear"
@@ -78,8 +85,10 @@ class ClearGrader(Grader):
         end_angle = hip_line_angle(end_frame)
         rotation_deg = abs((end_angle - start_angle + 180) % 360 - 180)
 
-        if ClearGrader.hip_rotation_mean is not None:
-            return self._rotation_grader(10, rotation_deg, ClearGrader.hip_rotation_mean, ClearGrader.hip_rotation_std)
+        hip_mean = ClearGrader.hip_rotation_mean
+        hip_std = ClearGrader.hip_rotation_std
+        if hip_mean is not None and hip_std is not None:
+            return self._rotation_grader(10, rotation_deg, hip_mean, hip_std)
         return 10.0 if rotation_deg > 10 else 0.0
 
     def grade_checkpoint_3(self, angles: AngleDicts, frame_idx: int) -> float:
@@ -122,8 +131,10 @@ class ClearGrader(Grader):
         start_angle = shoulder_line_angle(landmark_list[0])
         end_angle = shoulder_line_angle(landmark_list[frame_idx])
         rotation_deg = abs((end_angle - start_angle + 180) % 360 - 180)
-        if ClearGrader.shoulder_rotation_mean is not None:
-            grade += self._rotation_grader(10, rotation_deg, ClearGrader.shoulder_rotation_mean, ClearGrader.shoulder_rotation_std)
+        shoulder_mean = ClearGrader.shoulder_rotation_mean
+        shoulder_std = ClearGrader.shoulder_rotation_std
+        if shoulder_mean is not None and shoulder_std is not None:
+            grade += self._rotation_grader(10, rotation_deg, shoulder_mean, shoulder_std)
         elif rotation_deg > 12:
             grade += 10
 

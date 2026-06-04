@@ -54,7 +54,7 @@ class PlayerGrader:
         )
         # Raw landmarks are passed to the grader for scale-invariant rotation
         # computations (atan2-based hip/shoulder line deltas).
-        landmark_list: list[CoordinateDict] = [
+        landmark_list = [
             tracking["original_landmarks"][i] for i in key_indices
         ]
 
