@@ -64,7 +64,7 @@ class PoseDetector:
         self.model_name = model_path
         self.pose2d_model = pose2d_model
         self.wholebody_model_name = wholebody_model
-        self.model: Any | None = self._load_inferencer(model_path)
+        self.model: Any | None = None
         self.wholebody_model: Any | None = None
 
         self.__cur_time: float = 0.0

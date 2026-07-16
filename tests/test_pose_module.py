@@ -17,7 +17,8 @@ class TestPoseDetector:
 
     def test_pose_detector_initialization(self):
         assert self.detector.min_detection_confidence == 0.5
-        assert hasattr(self.detector, "model")
+        assert self.detector.model is None
+        assert self.detector.wholebody_model is None
         assert hasattr(self.detector, "logger")
 
     # def test_fps_calculation(self):
