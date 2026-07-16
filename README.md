@@ -74,6 +74,36 @@ Each skill's analysis window is divided into 5 key frames:
 
 ## Usage
 
+### Skeleton correction (clear feasibility)
+
+The experimental clear-only skeleton-correction workflow is documented in
+[`docs/skeleton-correction.md`](docs/skeleton-correction.md). It extracts fixed
+64-frame dominant-side skeleton sequences, trains an expert denoiser, evaluates
+correction-distance separation, and renders correction overlays. The quantitative
+experiment separates the labeled groups, but the per-video grades have not passed
+qualitative validation and must be treated as diagnostic only. The backend is
+opt-in with `--scorer skeleton-correction`; the existing default remains unchanged.
+The expert-guided v3 checkpoint uses a full, bone-preserving training-expert
+target and rejects checkpoints unless every validation correction is inside the
+natural expert-to-expert Euclidean distance range. All ten untouched test
+students passed the same test. This validates correction geometry, but it does
+not replace the missing human grade calibration. Full-clip wrist motion now
+determines handedness before phase extraction, with conservative override
+fallbacks for ambiguous clips. Inference also writes per-keypoint and per-phase
+correction evidence plus ranked JSONL context for language-model coaching; those
+signals remain diagnostic rather than human-validated rubric scores.
+
+`scripts/analyze_clear_with_openai.py` turns one scored clear clip into an
+ordered image sequence, combines it with the clear rules and keypoint evidence,
+and requests Traditional Chinese timestamp/joint feedback from the OpenAI
+Responses API. Titles, frames, and joint IDs are constrained to the exact six
+`ClearGrader` criteria and their original grading checkpoints.
+The video renderer can then pause at each selected frame, circle those joints,
+and display the coaching instruction. See the OpenAI-assisted coaching section
+in [`docs/skeleton-correction.md`](docs/skeleton-correction.md). For a complete
+code-level call graph and the required replacement points for another skill, see
+[`docs/skeleton-correction-pipeline.md`](docs/skeleton-correction-pipeline.md).
+
 ### With uv (recommended)
 
 - Sync dependencies (project + dev): `uv sync --dev`
