@@ -66,7 +66,7 @@ class BodyCoordinateSystem(TypedDict):
     origin: NDArray[np.float64]
     x_axis: NDArray[np.float64]
     y_axis: NDArray[np.float64]
-    z_axis: NDArray[np.float64]
+    z_axis: NotRequired[NDArray[np.float64]]
 
 
 Coordinate2D: TypeAlias = NDArray[np.float64]  # shape (2,)
