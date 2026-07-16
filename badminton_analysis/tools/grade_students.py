@@ -1,11 +1,14 @@
 import argparse
+import inspect
 from pathlib import Path
 from typing import Any, Sequence
 
 import pandas as pd
 
 from badminton_analysis.models.types import GradingDetail, Handedness, Skill
+from badminton_analysis.ml.skeleton_backend import SkeletonCorrectionBackend
 from badminton_analysis.services.graders.player import PlayerGrader
+from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.services.video_processor import VideoProcessor
 
 VIDEO_EXTENSIONS = (".mp4", ".mov")
@@ -25,6 +28,9 @@ def grade_videos_in_dir(
     skill: Skill,
     *,
     footwork_reference_path: str | None = None,
+    scorer: str | None = None,
+    model_path: str | None = None,
+    calibration_path: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     source_dir = Path(input_dir)
     destination_dir = Path(output_dir)
@@ -39,6 +45,18 @@ def grade_videos_in_dir(
         raise ValueError(f"No videos found in input directory: {input_dir}")
 
     player_grader = PlayerGrader()
+    processor_accepts_pose_detector = (
+        "pose_detector" in inspect.signature(VideoProcessor).parameters
+    )
+    pose_detector = PoseDetector() if processor_accepts_pose_detector else None
+    skeleton_backend = (
+        SkeletonCorrectionBackend(
+            model_path or "models/skeleton_correction/clear_denoiser.pt",
+            calibration_path=calibration_path,
+        )
+        if scorer == "skeleton-correction"
+        else None
+    )
     rows: list[dict[str, Any]] = []
     failures = 0
 
@@ -51,14 +69,21 @@ def grade_videos_in_dir(
                 str(video_path),
                 video_path.name,
                 str(destination_dir),
+                **({"pose_detector": pose_detector} if pose_detector is not None else {}),
             )
             tracking = processor.process_frames(handedness)
-            grade, window = player_grader.grade(
-                skill,
-                handedness,
-                tracking,
-                footwork_reference_path=footwork_reference_path,
-            )
+            diagnostics: dict[str, Any] = {}
+            if skeleton_backend is not None:
+                grade, window, diagnostics = skeleton_backend.score(
+                    tracking, handedness, skill
+                )
+            else:
+                grade, window = player_grader.grade(
+                    skill,
+                    handedness,
+                    tracking,
+                    footwork_reference_path=footwork_reference_path,
+                )
             row: dict[str, Any] = {
                 "filename": video_path.name,
                 "skill": str(skill),
@@ -71,6 +96,7 @@ def grade_videos_in_dir(
                 "end_frame": window[2],
             }
             row.update(_flatten_details(grade["grading_details"]))
+            row.update(diagnostics)
         except Exception as exc:
             print(f"  ERROR: {exc}")
             failures += 1
@@ -116,6 +142,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--reference-data",
         help="JSON file containing precomputed footwork reference trajectories",
     )
+    parser.add_argument(
+        "--scorer",
+        choices=("skeleton-correction",),
+        help="Scoring backend; omitted preserves the current default behavior",
+    )
+    parser.add_argument(
+        "--model-path",
+        help="Skeleton-correction checkpoint path",
+    )
+    parser.add_argument(
+        "--calibration-path",
+        help="Optional skeleton-correction calibration JSON path",
+    )
     return parser
 
 
@@ -133,6 +172,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if skill == Skill.FOOTWORK and not args.reference_data:
         print("Error: --reference-data is required when grading footwork")
         return 1
+    if args.scorer == "skeleton-correction" and skill != Skill.CLEAR:
+        print("Error: skeleton-correction currently supports clear only")
+        return 1
 
     try:
         rows, failures = grade_videos_in_dir(
@@ -140,8 +182,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_dir,
             skill,
             footwork_reference_path=args.reference_data,
+            scorer=args.scorer,
+            model_path=args.model_path,
+            calibration_path=args.calibration_path,
         )
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
 

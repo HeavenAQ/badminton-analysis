@@ -1,5 +1,5 @@
 from enum import IntEnum, auto
-from typing import Literal, TypedDict, TypeAlias, override
+from typing import Literal, NotRequired, TypedDict, TypeAlias, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,6 +23,10 @@ class COCOKeypoints(IntEnum):
     RIGHT_KNEE = 14
     LEFT_ANKLE = 15
     RIGHT_ANKLE = 16
+
+
+LEFT_MIDDLE_MCP_INDEX = 100
+RIGHT_MIDDLE_MCP_INDEX = 121
 
 
 class Skill(IntEnum):
@@ -62,11 +66,17 @@ class BodyCoordinateSystem(TypedDict):
     origin: NDArray[np.float64]
     x_axis: NDArray[np.float64]
     y_axis: NDArray[np.float64]
+    z_axis: NDArray[np.float64]
 
 
-Coordinate: TypeAlias = NDArray[np.float64]  # shape (2,)
-Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, 2)
-CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate]
+Coordinate2D: TypeAlias = NDArray[np.float64]  # shape (2,)
+Coordinate3D: TypeAlias = NDArray[np.float64]  # shape (3,)
+Coordinate: TypeAlias = Coordinate3D
+Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, D)
+CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate3D]
+CoordinateDict3D: TypeAlias = dict[COCOKeypoints, Coordinate3D]
+Coordinate2DDict: TypeAlias = dict[COCOKeypoints, Coordinate2D]
+WholeBodyCoordinateDict: TypeAlias = dict[int, Coordinate2D]
 CoordinatesDict: TypeAlias = dict[COCOKeypoints, Coordinates]
 AngleDict: TypeAlias = dict[str, float]
 AngleDicts: TypeAlias = list[AngleDict]
@@ -91,9 +101,11 @@ class VideoAnalysisResponse(TypedDict):
 class TrackingData(TypedDict):
     frames: list[NDArray[np.uint8]]
     original_landmarks: list[CoordinateDict]
-    hand_positions: list[Coordinate]
-    elbow_positions: list[Coordinate]
+    body_landmarks_2d: NotRequired[list[Coordinate2DDict]]
+    hand_positions: list[Coordinate2D]
+    elbow_positions: list[Coordinate2D]
     time_intervals: list[float]
+    wholebody_landmarks: NotRequired[list[WholeBodyCoordinateDict]]
 
 
 StepSequence: TypeAlias = list[Literal["L", "R"]]

@@ -1,6 +1,5 @@
 import pytest
 import numpy as np
-import torch
 from unittest.mock import patch, MagicMock, PropertyMock
 from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.models.types import COCOKeypoints
@@ -8,11 +7,13 @@ from badminton_analysis.models.types import COCOKeypoints
 
 class TestPoseDetector:
     def setup_method(self, method):
-        with patch("badminton_analysis.services.pose_detector.YOLO") as mock_yolo:
-            mock_yolo.return_value = MagicMock()
-            with patch("badminton_analysis.core.logger.Logger") as mock_logger:  # Mock the Logger
-                mock_logger.return_value.info = MagicMock()  # Mock the info method
-                self.detector = PoseDetector()
+        with patch.object(PoseDetector, "_load_inferencer") as mock_inferencer:
+            mock_inferencer.return_value = MagicMock()
+            with patch.object(PoseDetector, "_load_2d_inferencer") as mock_2d:
+                mock_2d.return_value = MagicMock()
+                with patch("badminton_analysis.core.logger.Logger") as mock_logger:  # Mock the Logger
+                    mock_logger.return_value.info = MagicMock()  # Mock the info method
+                    self.detector = PoseDetector()
 
     def test_pose_detector_initialization(self):
         assert self.detector.min_detection_confidence == 0.5
@@ -89,40 +90,93 @@ class TestPoseDetector:
         assert landmarks is None
 
     def test_get_2d_landmarks_no_keypoints(self):
-        results = [MagicMock()]
-        results[0].keypoints = None
+        results = [{"bbox": [0, 0, 100, 100], "keypoints": None}]
         landmarks = self.detector.get_2d_landmarks(results)
         assert landmarks is None
 
-    def test_get_pose_method(self):
-        img = np.zeros((480, 640, 3), dtype=np.uint8)
+    def test_select_target_prefers_largest_bbox(self):
+        smaller_near_previous_target = {
+            "bbox": [0.0, 0.0, 20.0, 20.0],
+            "keypoints": [[5.0, 5.0], [10.0, 10.0]],
+            "keypoint_scores": [1.0, 1.0],
+        }
+        larger_farther_target = {
+            "bbox": [100.0, 100.0, 180.0, 190.0],
+            "keypoints": [[120.0, 130.0], [150.0, 170.0]],
+            "keypoint_scores": [1.0, 1.0],
+        }
+        self.detector._target_bbox_center = np.array((10.0, 10.0), dtype=np.float64)
 
-        with patch.object(self.detector.model, "track") as mock_track:
-            mock_track.return_value = "mock_results"
-
-            result = self.detector.get_pose(img)
-
-            mock_track.assert_called_once_with(
-                img, conf=0.5, persist=True, verbose=False
-            )
-            assert result == "mock_results"
-
-    def test_get_2d_landmarks_with_keypoints(self):
-        mock_results = MagicMock()
-        mock_results.boxes = MagicMock()
-        mock_results.boxes.__len__.return_value = 1
-        mock_results.boxes.xywhn = torch.tensor([[0.5, 0.5, 0.2, 0.2]])
-        mock_results.boxes.id = None
-        mock_results.keypoints = MagicMock()
-        mock_results.keypoints.data = torch.tensor(
-            [[[100.0, 200.0, 0.9], [150.0, 250.0, 0.8]]]
+        target = self.detector._select_target(
+            [smaller_near_previous_target, larger_farther_target]
         )
 
-        results = [mock_results]
-        landmarks = self.detector.get_2d_landmarks(results)
+        assert target is larger_farther_target
+
+    def test_get_pose_method(self):
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        inference_result = {
+            "predictions": [
+                [
+                    {
+                        "keypoints": [
+                            [0.1, 0.2, 0.3],
+                            [0.4, 0.5, 0.6],
+                        ],
+                        "keypoint_scores": [1.0, 1.0],
+                    }
+                ]
+            ]
+        }
+        wholebody_result = {
+            "predictions": [
+                [
+                    {
+                        "bbox": [100.0, 100.0, 200.0, 300.0],
+                        "keypoints": [[100.0, 200.0], [150.0, 250.0]],
+                        "keypoint_scores": [0.9, 0.8],
+                    }
+                ]
+            ]
+        }
+
+        self.detector.model = MagicMock()
+        self.detector.wholebody_model = MagicMock(return_value=iter([wholebody_result]))
+        with patch.object(
+            self.detector,
+            "_lift_wholebody_predictions_to_3d",
+            return_value=inference_result["predictions"][0],
+        ) as mock_lift:
+            result = self.detector.get_pose(img)
+
+        self.detector.wholebody_model.assert_called_once_with(
+            img,
+            return_datasamples=False,
+            show=False,
+            draw_bbox=False,
+        )
+        self.detector.model.assert_not_called()
+        mock_lift.assert_called_once_with(
+            wholebody_result["predictions"][0],
+        )
+        assert result == inference_result["predictions"][0]
+
+    def test_get_3d_landmarks_with_keypoints(self):
+        results = [
+            {
+                "keypoints": [
+                    [0.1, 0.2, 0.3],
+                    [0.4, 0.5, 0.6],
+                ],
+                "keypoint_scores": [1.0, 1.0],
+            }
+        ]
+        landmarks = self.detector.get_3d_landmarks(results)
 
         assert isinstance(landmarks, dict)
         assert len(landmarks) == 2
+        assert landmarks[COCOKeypoints.NOSE].shape == (3,)
+        assert np.allclose(landmarks[COCOKeypoints.NOSE], [0.1, 0.2, 0.3])
 
     @patch("badminton_analysis.services.pose_detector.cv2.ellipse")
     @patch.object(PoseDetector, "_PoseDetector__add_text_with_pillow")

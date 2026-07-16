@@ -131,3 +131,69 @@ def test_grade_students_main_requires_footwork_reference(tmp_path: Path) -> None
     )
 
     assert exit_code == 1
+
+
+def test_grade_students_skeleton_backend_writes_compatible_diagnostics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_dir = tmp_path / "videos"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    (input_dir / "clear.mp4").write_bytes(b"")
+
+    class FakeProcessor:
+        def __init__(self, video_path: str, out_filename: str, output_folder: str) -> None:
+            pass
+
+        def process_frames(self, handedness):
+            return {
+                "frames": [],
+                "original_landmarks": [{} for _ in range(5)],
+                "body_landmarks_2d": [{} for _ in range(5)],
+                "hand_positions": [],
+                "elbow_positions": [],
+                "time_intervals": [],
+            }
+
+    class FakeBackend:
+        def __init__(self, model_path, **kwargs) -> None:
+            assert str(model_path).endswith("model.pt")
+
+        def score(self, tracking, handedness, skill):
+            return (
+                {
+                    "total_grade": 44.5,
+                    "grading_details": [
+                        {"description": "Preparation correction", "grade": 4.5}
+                    ],
+                },
+                (3, 8, 12),
+                {
+                    "correction_distance": 0.42,
+                    "position_distance": 0.3,
+                    "angle_distance": 0.1,
+                    "velocity_distance": 0.02,
+                    "bone_length_distance": 0.01,
+                    "model_path": "model.pt",
+                    "scorer": "skeleton-correction",
+                },
+            )
+
+    monkeypatch.setattr(grade_students, "VideoProcessor", FakeProcessor)
+    monkeypatch.setattr(grade_students, "SkeletonCorrectionBackend", FakeBackend)
+
+    exit_code = grade_students.main(
+        [
+            "--skill", "clear",
+            "--input-dir", str(input_dir),
+            "--output-dir", str(output_dir),
+            "--scorer", "skeleton-correction",
+            "--model-path", "model.pt",
+        ]
+    )
+
+    assert exit_code == 0
+    result = pd.read_csv(output_dir / "grading_results.csv")
+    assert result.loc[0, "total_grade"] == 44.5
+    assert result.loc[0, "scorer"] == "skeleton-correction"
+    assert result.loc[0, "position_distance"] == 0.3
