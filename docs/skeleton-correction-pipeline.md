@@ -7,12 +7,13 @@ reference for implementing the same design for another badminton skill.
 
 The central distinction is:
 
-- the **technical criteria** come from the existing skill grader and determine
+- the **technical criteria** are encoded in `clear_feedback.py` and determine
   what the coach talks about;
 - the **numeric score** comes from the difference between the original skeleton
   and the model's expert-like corrected skeleton.
 
-The legacy angle-rule score is not used as the displayed total.
+The six technical criteria constrain coaching, but they do not calculate the
+displayed total.
 
 ## 1. End-to-End Call Graph
 
@@ -412,9 +413,8 @@ The model receives:
 
 - ordered checkpoint-aware images;
 - handedness and canonical/physical-side explanation;
-- the exact six original `ClearGrader` criterion names and formulas;
+- the exact six clear criterion names and technical definitions;
 - current expert angle means and standard deviations;
-- checkpoint measurements without legacy display scores;
 - correction-distance total, components, and six detail scores;
 - lowest keypoint correction scores and directions.
 
@@ -462,8 +462,9 @@ feedback.csv
 annotated_feedback_h264.mp4
 ```
 
-Generated datasets, checkpoints, statistics, and videos are intentionally not
-committed to Git.
+Generated datasets, statistics, and videos are intentionally not committed to
+Git. The accepted v3 checkpoint and its calibration are committed so a clean
+checkout can run inference.
 
 ## 16. Reproducing Clear
 
