@@ -25,10 +25,6 @@ class COCOKeypoints(IntEnum):
     RIGHT_ANKLE = 16
 
 
-LEFT_MIDDLE_MCP_INDEX = 100
-RIGHT_MIDDLE_MCP_INDEX = 121
-
-
 class Skill(IntEnum):
     SERVE = auto()
     CLEAR = auto()
@@ -62,24 +58,14 @@ class Handedness(IntEnum):
         return self.name.lower()
 
 
-class BodyCoordinateSystem(TypedDict):
-    origin: NDArray[np.float64]
-    x_axis: NDArray[np.float64]
-    y_axis: NDArray[np.float64]
-    z_axis: NotRequired[NDArray[np.float64]]
-
-
 Coordinate2D: TypeAlias = NDArray[np.float64]  # shape (2,)
 Coordinate3D: TypeAlias = NDArray[np.float64]  # shape (3,)
-Coordinate: TypeAlias = Coordinate3D
+Coordinate: TypeAlias = NDArray[np.float64]  # shape (D,)
 Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, D)
 CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate3D]
-CoordinateDict3D: TypeAlias = dict[COCOKeypoints, Coordinate3D]
 Coordinate2DDict: TypeAlias = dict[COCOKeypoints, Coordinate2D]
 WholeBodyCoordinateDict: TypeAlias = dict[int, Coordinate2D]
-CoordinatesDict: TypeAlias = dict[COCOKeypoints, Coordinates]
 AngleDict: TypeAlias = dict[str, float]
-AngleDicts: TypeAlias = list[AngleDict]
 
 
 class GradingDetail(TypedDict):
@@ -90,12 +76,6 @@ class GradingDetail(TypedDict):
 class GradingOutcome(TypedDict):
     total_grade: float
     grading_details: list[GradingDetail]
-
-
-class VideoAnalysisResponse(TypedDict):
-    grade: GradingOutcome
-    used_angles_data: list[dict[str, float] | None]
-    processed_video: str
 
 
 class TrackingData(TypedDict):

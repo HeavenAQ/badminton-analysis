@@ -1,8 +1,6 @@
-import os
 import threading
 import time
-import base64
-from typing import Any, Optional
+from typing import Any
 import cv2
 import numpy as np
 from queue import Queue
@@ -40,7 +38,6 @@ class VideoProcessor:
         self.logger = Logger(self.__class__.__name__)
         self.pose_detector = pose_detector or PoseDetector()
         self.time_intervals: list[float] = []
-        self.output_path = os.path.join(self.output_folder, self.out_filename)
 
         # Buffers
         self.frames: list[NDArray[np.uint8]] = []
@@ -89,14 +86,11 @@ class VideoProcessor:
         )
         capture_thread.start()
 
-        frame_count = 0
         while True:
             if not frame_queue.empty():
                 frame = frame_queue.get()
                 time_interval = timestamp_queue.get()
                 self.time_intervals.append(time_interval)
-                frame_count += 1
-
                 results_3d = self.pose_detector.get_pose(frame)
                 landmark_3d = self.pose_detector.get_3d_landmarks(results_3d)
                 landmark_2d = self.pose_detector.get_2d_landmarks()
@@ -154,41 +148,3 @@ class VideoProcessor:
             "time_intervals": self.time_intervals,
             "wholebody_landmarks": self.wholebody_landmarks,
         }
-
-    def _create_video_clip_base64(
-        self, start_frame: int, end_frame: int, org_fps: float
-    ) -> str:
-        output_path = self.save_video_segment(start_frame, end_frame, org_fps)
-        try:
-            with open(output_path, "rb") as f:
-                video_data = f.read()
-            return base64.b64encode(video_data).decode("utf-8")
-        finally:
-            pass
-
-    def save_video_segment(
-        self,
-        start_index: int,
-        end_index: int,
-        org_fps: float,
-        filename: str = "segment.mp4",
-    ) -> str:
-        self.logger.info(
-            f"Saving video segment from frame {start_index} to {end_index}"
-        )
-        os.makedirs(self.output_folder, exist_ok=True)
-        output_video_path = os.path.join(self.output_folder, filename)
-        frame_width = self.frames[0].shape[1]
-        frame_height = self.frames[0].shape[0]
-        fourcc = cv2.VideoWriter.fourcc(*"mp4v")
-        out = cv2.VideoWriter(
-            output_video_path, fourcc, org_fps, (frame_width, frame_height)
-        )
-        for i in range(start_index, end_index + 1):
-            frame = self.frames[i].copy()
-            landmarks = self.body_landmarks_2d[i] if self.body_landmarks_2d else None
-            if landmarks is not None:
-                self.pose_detector.show_angles(frame, landmarks)
-            out.write(frame)
-        out.release()
-        return output_video_path
