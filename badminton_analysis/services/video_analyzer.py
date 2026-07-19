@@ -33,15 +33,15 @@ class VideoAnalyzer:
         pad_mode: Literal["edge"] | Literal["reflect"] = "edge",
     ) -> NDArray[np.floating[Any]]:
         pos = np.asarray(positions, dtype=np.float64)
-        if pos.ndim != 2 or pos.shape[1] != 2:
-            raise ValueError("positions must have shape (N, 2)")
+        if pos.ndim != 2 or pos.shape[1] < 2:
+            raise ValueError("positions must have shape (N, D), D >= 2")
         k = np.ones(window_size) / window_size
         pad = window_size // 2
-        x = np.pad(pos[:, 0], (pad, pad), mode=pad_mode)
-        y = np.pad(pos[:, 1], (pad, pad), mode=pad_mode)
-        xs = np.convolve(x, k, mode="valid")
-        ys = np.convolve(y, k, mode="valid")
-        return np.column_stack((xs, ys))
+        smoothed = []
+        for dim in range(pos.shape[1]):
+            padded = np.pad(pos[:, dim], (pad, pad), mode=pad_mode)
+            smoothed.append(np.convolve(padded, k, mode="valid"))
+        return np.column_stack(smoothed)
 
     @staticmethod
     def calc_velocity(

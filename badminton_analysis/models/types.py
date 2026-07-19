@@ -1,5 +1,5 @@
 from enum import IntEnum, auto
-from typing import Literal, TypedDict, TypeAlias, override
+from typing import Literal, NotRequired, TypedDict, TypeAlias, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -58,18 +58,14 @@ class Handedness(IntEnum):
         return self.name.lower()
 
 
-class BodyCoordinateSystem(TypedDict):
-    origin: NDArray[np.float64]
-    x_axis: NDArray[np.float64]
-    y_axis: NDArray[np.float64]
-
-
-Coordinate: TypeAlias = NDArray[np.float64]  # shape (2,)
-Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, 2)
-CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate]
-CoordinatesDict: TypeAlias = dict[COCOKeypoints, Coordinates]
+Coordinate2D: TypeAlias = NDArray[np.float64]  # shape (2,)
+Coordinate3D: TypeAlias = NDArray[np.float64]  # shape (3,)
+Coordinate: TypeAlias = NDArray[np.float64]  # shape (D,)
+Coordinates: TypeAlias = NDArray[np.float64]  # shape (N, D)
+CoordinateDict: TypeAlias = dict[COCOKeypoints, Coordinate3D]
+Coordinate2DDict: TypeAlias = dict[COCOKeypoints, Coordinate2D]
+WholeBodyCoordinateDict: TypeAlias = dict[int, Coordinate2D]
 AngleDict: TypeAlias = dict[str, float]
-AngleDicts: TypeAlias = list[AngleDict]
 
 
 class GradingDetail(TypedDict):
@@ -82,18 +78,14 @@ class GradingOutcome(TypedDict):
     grading_details: list[GradingDetail]
 
 
-class VideoAnalysisResponse(TypedDict):
-    grade: GradingOutcome
-    used_angles_data: list[dict[str, float] | None]
-    processed_video: str
-
-
 class TrackingData(TypedDict):
     frames: list[NDArray[np.uint8]]
     original_landmarks: list[CoordinateDict]
-    hand_positions: list[Coordinate]
-    elbow_positions: list[Coordinate]
+    body_landmarks_2d: NotRequired[list[Coordinate2DDict]]
+    hand_positions: list[Coordinate2D]
+    elbow_positions: list[Coordinate2D]
     time_intervals: list[float]
+    wholebody_landmarks: NotRequired[list[WholeBodyCoordinateDict]]
 
 
 StepSequence: TypeAlias = list[Literal["L", "R"]]
