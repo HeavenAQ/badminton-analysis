@@ -53,7 +53,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir", default="stats/openai_clear_feedback/EG29"
     )
     parser.add_argument("--model", default="gpt-5.6-terra")
-    parser.add_argument("--clear-stats-dir", default="stats/clear")
     parser.add_argument(
         "--grading-results-path",
         default=(
@@ -128,10 +127,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     context = prompt_context(
         advice,
         samples,
-        dataset_path=dataset_path,
         phase_indices=phase_indices,
         correction_grade=correction_grade,
-        clear_stats_dir=Path(args.clear_stats_dir),
     )
     context_path = output_dir / "prompt_context.json"
     context_path.write_text(

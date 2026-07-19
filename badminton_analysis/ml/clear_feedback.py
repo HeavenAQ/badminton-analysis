@@ -384,259 +384,6 @@ def load_correction_grade_context(
     }
 
 
-def load_clear_expert_targets(stats_dir: Path) -> dict[str, Any]:
-    mean = pd.read_csv(stats_dir / "mean.csv", index_col=0).set_index("feature")
-    std = pd.read_csv(stats_dir / "std.csv", index_col=0).set_index("feature")
-    mean.columns = list(range(5))
-    std.columns = list(range(5))
-    rotation = pd.read_csv(stats_dir / "rotation_stats.csv").set_index("feature")
-
-    def angle_target(feature: str, checkpoint: int) -> dict[str, float]:
-        return {
-            "expert_mean_degrees": float(mean.loc[feature, checkpoint]),
-            "expert_std_degrees": float(std.loc[feature, checkpoint]),
-        }
-
-    return {
-        "球拍舉至腰部預備": {
-            "慣用側肩膀角度": angle_target("Dominant Shoulder Angle", 0),
-            "非慣用側肩膀角度": angle_target("Non-dominant Shoulder Angle", 0),
-        },
-        "轉身": {
-            "髖部連線旋轉角度": {
-                "expert_mean_degrees": float(
-                    rotation.loc["Hip Line Rotation CP2", "mean"]
-                ),
-                "expert_std_degrees": float(
-                    rotation.loc["Hip Line Rotation CP2", "std"]
-                ),
-            }
-        },
-        "雙手手肘平衡": {
-            "慣用側肩膀角度": angle_target("Dominant Shoulder Angle", 1),
-            "非慣用側肩膀角度": angle_target("Non-dominant Shoulder Angle", 1),
-        },
-        "手肘往前轉至前方": {
-            "慣用側肩膀角度": angle_target("Dominant Shoulder Angle", 2),
-            "鼻子_慣用側肩膀_手肘夾角": angle_target(
-                "Nose Dominant Shoulder Elbow Angle", 2
-            ),
-            "慣用側手肘角度": angle_target("Dominant Elbow Angle", 2),
-        },
-        "手腕發力": {
-            "手腕夾角開始得分": 130.0,
-            "手腕夾角滿分": 165.0,
-            "無手部關鍵點時的手肘角度": angle_target(
-                "Dominant Elbow Angle", 2
-            ),
-        },
-        "慣用手肩膀往前轉": {
-            "第3關鍵幀慣用側肩膀角度": angle_target(
-                "Dominant Shoulder Angle", 3
-            ),
-            "第4關鍵幀慣用側肩膀角度": angle_target(
-                "Dominant Shoulder Angle", 4
-            ),
-            "雙肩連線旋轉角度": {
-                "expert_mean_degrees": float(
-                    rotation.loc["Shoulder Line Rotation CP6", "mean"]
-                ),
-                "expert_std_degrees": float(
-                    rotation.loc["Shoulder Line Rotation CP6", "std"]
-                ),
-            },
-        },
-    }
-
-
-def load_student_clear_rule_evidence(
-    dataset_path: Path, stats_dir: Path
-) -> dict[str, Any]:
-    with np.load(dataset_path, allow_pickle=False) as sample:
-        skeleton = np.asarray(sample["skeleton_3d"], dtype=np.float64)
-        phase_indices = _validated_phase_indices(sample["phase_indices"])
-    frames = skeleton[np.asarray(phase_indices, dtype=np.int64)]
-    targets = load_clear_expert_targets(stats_dir)
-
-    def angle(frame: NDArray[np.float64], a: int, b: int, c: int) -> float:
-        first = frame[a] - frame[b]
-        second = frame[c] - frame[b]
-        denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-        if denominator <= 1e-12:
-            return 0.0
-        cosine = float(np.clip(np.dot(first, second) / denominator, -1.0, 1.0))
-        return float(np.degrees(np.arccos(cosine)))
-
-    def vector_delta(first: NDArray[np.float64], second: NDArray[np.float64]) -> float:
-        denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-        if denominator <= 1e-12:
-            return 0.0
-        cosine = float(np.clip(np.dot(first, second) / denominator, -1.0, 1.0))
-        return float(np.degrees(np.arccos(cosine)))
-
-    def target(criterion: str, measurement: str) -> tuple[float, float]:
-        values = targets[criterion][measurement]
-        return (
-            float(values["expert_mean_degrees"]),
-            float(values["expert_std_degrees"]),
-        )
-
-    def angle_grade(maximum: float, value: float, mean: float, std: float) -> float:
-        minimum = mean - std
-        maximum_angle = mean + std
-        if minimum <= value <= maximum_angle:
-            return maximum
-        if value < minimum:
-            return maximum * value / minimum if minimum > 1e-6 else 0.0
-        return maximum * maximum_angle / value if value > 1e-6 else 0.0
-
-    def rotation_grade(maximum: float, value: float, mean: float, std: float) -> float:
-        z_score = (value - mean) / std if std > 1e-6 else 0.0
-        if z_score >= 0:
-            return maximum
-        return maximum * math.exp(-0.5 * (z_score / 0.8) ** 2)
-
-    def measurements(frame: NDArray[np.float64]) -> dict[str, float]:
-        return {
-            "慣用側肩膀角度": angle(frame, 12, 6, 8),
-            "非慣用側肩膀角度": angle(frame, 11, 5, 7),
-            "鼻子_慣用側肩膀_手肘夾角": angle(frame, 0, 6, 8),
-            "慣用側手肘角度": angle(frame, 6, 8, 10),
-        }
-
-    frame_values = [measurements(frame) for frame in frames]
-    hip_rotation = vector_delta(
-        frames[0, 11] - frames[0, 12], frames[1, 11] - frames[1, 12]
-    )
-    shoulder_rotations = [
-        vector_delta(
-            frames[0, 5] - frames[0, 6], frames[index, 5] - frames[index, 6]
-        )
-        for index in (3, 4)
-    ]
-
-    prep_dom = target("球拍舉至腰部預備", "慣用側肩膀角度")
-    prep_non_dom = target("球拍舉至腰部預備", "非慣用側肩膀角度")
-    prep_score = angle_grade(5, frame_values[0]["慣用側肩膀角度"], *prep_dom)
-    prep_score += angle_grade(
-        5, frame_values[0]["非慣用側肩膀角度"], *prep_non_dom
-    )
-
-    hip_target = target("轉身", "髖部連線旋轉角度")
-    rotation_score = rotation_grade(10, hip_rotation, *hip_target)
-
-    balance_dom = target("雙手手肘平衡", "慣用側肩膀角度")
-    balance_non_dom = target("雙手手肘平衡", "非慣用側肩膀角度")
-    balance_score = angle_grade(
-        10, frame_values[1]["慣用側肩膀角度"], *balance_dom
-    )
-    balance_score += angle_grade(
-        10, frame_values[1]["非慣用側肩膀角度"], *balance_non_dom
-    )
-
-    contact_shoulder = target("手肘往前轉至前方", "慣用側肩膀角度")
-    contact_arm_line = target(
-        "手肘往前轉至前方", "鼻子_慣用側肩膀_手肘夾角"
-    )
-    contact_elbow = target("手肘往前轉至前方", "慣用側手肘角度")
-    elbow_forward_score = angle_grade(
-        8, frame_values[2]["慣用側肩膀角度"], *contact_shoulder
-    )
-    elbow_forward_score += angle_grade(
-        8, frame_values[2]["鼻子_慣用側肩膀_手肘夾角"], *contact_arm_line
-    )
-    elbow_forward_score += angle_grade(
-        4, frame_values[2]["慣用側手肘角度"], *contact_elbow
-    )
-
-    wrist_fallback = target("手腕發力", "無手部關鍵點時的手肘角度")
-    wrist_score = angle_grade(
-        20, frame_values[2]["慣用側手肘角度"], *wrist_fallback
-    )
-
-    follow_scores: list[float] = []
-    for candidate_index, rotation_value in zip((3, 4), shoulder_rotations):
-        shoulder_target = target(
-            "慣用手肩膀往前轉",
-            f"第{candidate_index}關鍵幀慣用側肩膀角度",
-        )
-        shoulder_score = angle_grade(
-            10,
-            frame_values[candidate_index]["慣用側肩膀角度"],
-            *shoulder_target,
-        )
-        rotation_target = target("慣用手肩膀往前轉", "雙肩連線旋轉角度")
-        follow_scores.append(
-            shoulder_score
-            + rotation_grade(10, rotation_value, *rotation_target)
-        )
-    follow_choice = int(np.argmax(follow_scores)) + 3
-
-    criteria: tuple[dict[str, Any], ...] = (
-        {
-            "name_zh_tw": "球拍舉至腰部預備",
-            "score": prep_score,
-            "maximum": 10.0,
-            "measurements_degrees": frame_values[0],
-            "checkpoint_frame": phase_indices[0],
-        },
-        {
-            "name_zh_tw": "轉身",
-            "score": rotation_score,
-            "maximum": 10.0,
-            "measurements_degrees": {"髖部連線旋轉角度": hip_rotation},
-            "checkpoint_frame": phase_indices[1],
-        },
-        {
-            "name_zh_tw": "雙手手肘平衡",
-            "score": balance_score,
-            "maximum": 20.0,
-            "measurements_degrees": frame_values[1],
-            "checkpoint_frame": phase_indices[1],
-        },
-        {
-            "name_zh_tw": "手肘往前轉至前方",
-            "score": elbow_forward_score,
-            "maximum": 20.0,
-            "measurements_degrees": frame_values[2],
-            "checkpoint_frame": phase_indices[2],
-        },
-        {
-            "name_zh_tw": "手腕發力",
-            "score": wrist_score,
-            "maximum": 20.0,
-            "measurements_degrees": {
-                "慣用側手肘角度_手部關鍵點缺少時的程式替代值": frame_values[2][
-                    "慣用側手肘角度"
-                ]
-            },
-            "checkpoint_frame": phase_indices[2],
-        },
-        {
-            "name_zh_tw": "慣用手肩膀往前轉",
-            "score": follow_scores[follow_choice - 3],
-            "maximum": 20.0,
-            "measurements_degrees": {
-                "慣用側肩膀角度": frame_values[follow_choice][
-                    "慣用側肩膀角度"
-                ],
-                "雙肩連線旋轉角度": shoulder_rotations[follow_choice - 3],
-            },
-            "checkpoint_frame": phase_indices[follow_choice],
-        },
-    )
-    return {
-        "source": "ClearGrader原始規則公式；3D骨架已完成慣用側正規化",
-        "wrist_measurement_note": (
-            "序列資料沒有中指掌指關節，因此手腕發力依原始程式的慣用側手肘角度替代規則計算。"
-        ),
-        "criteria": criteria,
-        "total_rule_formula_score": float(
-            sum(float(criterion["score"]) for criterion in criteria)
-        ),
-    }
-
-
 def _encode_jpeg(frame: NDArray[Any], quality: int) -> tuple[bytes, str]:
     success, buffer = cv2.imencode(
         ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality]
@@ -712,28 +459,14 @@ def prompt_context(
     advice: dict[str, Any],
     samples: Sequence[SampledFrame],
     *,
-    dataset_path: Path,
     phase_indices: Sequence[int],
     correction_grade: dict[str, Any],
-    clear_stats_dir: Path = Path("stats/clear"),
 ) -> dict[str, Any]:
     start, rotation, contact, follow, end = _validated_phase_indices(phase_indices)
     keypoints = sorted(
         advice.get("keypoints", []),
         key=lambda item: float(item.get("score", 100.0)),
     )
-    legacy_evidence = load_student_clear_rule_evidence(
-        dataset_path, clear_stats_dir
-    )
-    legacy_evidence["criteria"] = [
-        {
-            key: value
-            for key, value in criterion.items()
-            if key != "score"
-        }
-        for criterion in legacy_evidence["criteria"]
-    ]
-    legacy_evidence.pop("total_rule_formula_score", None)
     return {
         "required_output_language": "繁體中文（臺灣，zh-TW）",
         "student": {
@@ -754,12 +487,8 @@ def prompt_context(
         "handedness_note_zh_tw": handedness_note_zh_tw(
             advice.get("handedness")
         ),
-        "clear_rules_from_original_code": CLEAR_RULES,
-        "expert_reference_values_from_original_code": load_clear_expert_targets(
-            clear_stats_dir
-        ),
+        "clear_technical_criteria": CLEAR_RULES,
         "correction_distance_grade": correction_grade,
-        "legacy_rule_checkpoint_evidence_without_display_scores": legacy_evidence,
         "criterion_allowed_frames": {
             "球拍舉至腰部預備": [start],
             "轉身": [rotation],
@@ -787,7 +516,7 @@ def build_response_input(
         {
             "type": "input_text",
             "text": (
-                "請依照原始程式中的六項高遠球評分標準分析這組依時間排序的動作畫面。"
+                "請依照提供的六項高遠球技術標準分析這組依時間排序的動作畫面。"
                 "只能回報一至三項屬於這六項標準的問題，title必須逐字使用標準名稱。"
                 "不得自行新增其他技術標準。請只使用available_frames中的frame_index，"
                 "而且每項標準只能選criterion_allowed_frames指定的原始評分關鍵幀。"
@@ -795,8 +524,8 @@ def build_response_input(
                 "肩膀往前轉只能圈慣用側肩膀（關節6），不可圈非慣用側肩膀。所有"
                 "overall_feedback、"
                 "feedback與evidence必須使用臺灣繁體中文，禁止英文句子與簡體中文。"
-                "顯示分數只能使用correction_distance_grade；舊規則關鍵幀資料只用來"
-                "解釋標準，不得另算總分。骨架修正與分數只能作為輔助，必須先由影像"
+                "顯示分數只能使用correction_distance_grade，不得另算總分。"
+                "骨架修正與分數只能作為輔助，必須先由影像"
                 "確認問題。\n\n分析資料：\n"
                 + json.dumps(context, ensure_ascii=False)
             ),
@@ -857,7 +586,7 @@ def validate_analysis_frames(
 
 
 SYSTEM_INSTRUCTIONS = """你是專業羽球教練，正在分析高遠球動作。
-你必須嚴格依照提供的原始ClearGrader六項評分標準，不得新增、改寫或混用其他技術標準。
+你必須嚴格依照提供的六項高遠球技術標準，不得新增、改寫或混用其他技術標準。
 影像是主要證據；青色與綠色骨架差異及其分數只能作為輔助假設。只回報影像與資料都支持的問題。
 所有給使用者看的文字必須使用臺灣繁體中文（zh-TW），不得使用英文句子或簡體中文。
 每項建議必須簡短明確，能在兩秒的影片暫停畫面中閱讀。關節編號必須使用提供的慣用側正規化對照。"""
