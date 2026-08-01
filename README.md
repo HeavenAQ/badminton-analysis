@@ -14,15 +14,40 @@ skills share pose extraction, normalization, Transformer correction, score
 calibration, and rendering code, but training examples and scores are never
 pooled across skills.
 
-Only the accepted clear checkpoint and calibration are currently committed:
+Accepted checkpoints, ONNX exports, and calibrations are committed for all four
+skills:
 
 ```text
 models/skeleton_correction/clear_expert_guided_v3.pt
 models/skeleton_correction/clear_expert_guided_v3.calibration.json
+models/skeleton_correction/serve_expert_guided_v1.pt
+models/skeleton_correction/lift_expert_guided_v1.pt
+models/skeleton_correction/smash_expert_guided_v1.pt
 ```
 
-Serve, lift, and smash are implemented end to end, but their models and grades
-must be generated from their own expert and student video datasets.
+Each skill is trained and calibrated independently.
+
+## Expert Data Contract
+
+The legacy expert corpus contains 50 right-handed experts per skill. It has no
+left-handed experts. NSTC contributes experts only from these exact directories:
+
+```text
+training_videos/nstc/{clear,serve,lift,smash}/left
+training_videos/nstc/{clear,serve,lift,smash}/right
+```
+
+Person-named directories below a skill are intentionally excluded. NSTC
+sequences use `nstc_left_` or `nstc_right_` ID prefixes to prevent same-named
+videos in the two hand directories from colliding. The combined expert counts
+are:
+
+| Skill | Right | Left | Total |
+|---|---:|---:|---:|
+| Clear | 80 | 20 | 100 |
+| Serve | 66 | 10 | 76 |
+| Lift | 72 | 10 | 82 |
+| Smash | 66 | 9 | 75 |
 
 ## Outputs
 
@@ -83,7 +108,7 @@ expert data, checkpoints, calibrations, joint weights, and prompt descriptions.
 ```text
 one skill's source videos
   -> direct RTMW3D whole-body 2D/3D pose
-  -> handedness from normalized wrist acceleration
+  -> authoritative expert handedness, or wrist acceleration for unlabeled video
   -> skill-specific analysis window
   -> dominant-side/body-frame normalization
   -> 64-frame resampling plus source-frame provenance
@@ -137,6 +162,17 @@ run serve or smash.
 ```
 
 The default output is `datasets/skeleton_sequences/lift/`.
+
+For known expert data, always supply its authoritative handedness. For example:
+
+```bash
+.venv/bin/python scripts/extract_skeleton_sequences.py \
+  --skill lift \
+  --groups experts \
+  --expert-dir training_videos/nstc/lift/left \
+  --known-handedness left \
+  --id-prefix nstc_left_
+```
 
 ### 2. Train
 

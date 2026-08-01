@@ -106,7 +106,7 @@ scripts/extract_skeleton_sequences.py --skill <skill>
   -> PoseDetector.get_pose()
   -> direct RTMW3D whole-body 2D/3D pose
   -> original-frame provenance
-  -> estimate_handedness()
+  -> authoritative metadata for labeled experts, otherwise estimate_handedness()
   -> VideoAnalyzer.find_analysis_window(skill=...)
   -> normalize_skeleton_sequence()
   -> resample_sequence(64)
@@ -259,12 +259,29 @@ confidence                (64, 17)
 skill                     scalar string
 handedness                scalar string
 video_name                scalar string
+source_video_name         original source filename when the sequence ID is prefixed
 analysis_window           start, peak, end in retained-pose space
 phase_indices             five anchors in normalized 0..63 space
 source_frame_indices      original frame ID for every normalized frame
 source_phase_indices      original frame IDs for the five anchors
 fps                       original video FPS
 ```
+
+### Expert Source Boundary
+
+The legacy expert directories contribute 50 right-handed experts per skill.
+They do not contain left-handed experts. Left-handed expert coverage comes from
+NSTC, and NSTC discovery is deliberately non-recursive: only
+`training_videos/nstc/<skill>/left` and
+`training_videos/nstc/<skill>/right` are accepted. Person-named sibling
+directories are not training inputs.
+
+Known expert handedness takes precedence over wrist-motion estimation during
+extraction. NSTC output IDs are prefixed with `nstc_left_` or `nstc_right_`, so
+identical filenames in both hand directories cannot overwrite one another.
+The combined expert-bank inventory is 100 clear (80 right, 20 left), 76 serve
+(66 right, 10 left), 82 lift (72 right, 10 left), and 75 smash (66 right, 9
+left).
 
 `phase_indices` must be used for model tensors and rendered 64-frame correction
 videos. `source_frame_indices` must be used when sampling the original video.
