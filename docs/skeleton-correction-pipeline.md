@@ -1,562 +1,784 @@
-# Skeleton-Correction Pipeline: Code Trace and Skill Extension Guide
+# Multi-Skill Skeleton-Correction Pipeline
 
-This document describes the current clear pipeline from source video to
-corrected skeleton, calibrated score, criterion-level evidence, and Traditional
-Chinese coaching video. It is intended as a code-tracing guide and as the
-reference for implementing the same design for another badminton skill.
+This document explains the knowledge needed to understand the code, the full
+architecture and grading algorithm, and the recommended code-tracing order.
 
-The central distinction is:
-
-- the **technical criteria** are encoded in `clear_feedback.py` and determine
-  what the coach talks about;
-- the **numeric score** comes from the difference between the original skeleton
-  and the model's expert-like corrected skeleton.
-
-The six technical criteria constrain coaching, but they do not calculate the
-displayed total.
-
-## 1. End-to-End Call Graph
+The supported correction skills are serve, lift, clear, and smash. They share
+an engine but remain separate experiments:
 
 ```text
-source videos
+datasets/skeleton_sequences/<skill>/
+models/skeleton_correction/<skill>_expert_guided_<version>.pt
+models/skeleton_correction/<skill>_expert_guided_<version>.calibration.json
+stats/skeleton_correction/<skill>_expert_guided_<version>_*/
+```
+
+No expert bank, checkpoint, or calibration is shared across skills. The clear
+checkpoint is currently committed. Serve, lift, and smash require their own
+data extraction, training, acceptance audit, and calibration runs.
+
+## 1. Knowledge Needed To Read The Code
+
+### Python And Data Structures
+
+You should be comfortable with:
+
+- Python dataclasses, enums, type annotations, mappings, and command-line
+  parsers;
+- NumPy broadcasting, masking, interpolation, norms, and array shapes;
+- PyTorch modules, tensors, optimizers, data loaders, checkpoints, and
+  inference mode;
+- pandas CSV operations; and
+- Pydantic models and validators for structured LLM output.
+
+The main tensor shapes are:
+
+```text
+one pose sequence       (T, J, 3)
+confidence              (T, J)
+expert bank             (N, T, J, 3)
+model input             (B, T, J, 7)
+model output            (B, T, J, 3)
+
+T = 64 frames
+J = 17 COCO joints
+```
+
+### Pose And Coordinate Concepts
+
+You should know the 17-joint COCO skeleton and the distinction between:
+
+- image coordinates: pixels in the original camera view;
+- lifted 3D coordinates: the pose lifter's estimated body geometry;
+- body-normalized coordinates: pelvis-centered coordinates scaled by the median
+  observed anatomical-segment length;
+- physical left/right joints; and
+- canonical dominant/non-dominant joints.
+
+After canonicalization, joint `6` is always the dominant shoulder, joint `8`
+the dominant elbow, and joint `10` the dominant wrist. For a left-handed player,
+those canonical IDs still map to the physical left side when rendered.
+
+### Time And Phase Concepts
+
+Three timelines must not be confused:
+
+```text
+original video frames
+  -> retained pose frames
+  -> normalized 64-frame model sequence
+```
+
+The NPZ stores mappings back to the original video. Phase alignment is a
+piecewise-linear temporal warp: it aligns five sample-specific anchors to one
+canonical five-anchor timeline before expert comparison.
+
+### Machine-Learning Concepts
+
+The model is supervised by pseudo-targets, not manually corrected skeletons.
+For each student, the target is the nearest phase-aligned training expert after
+adapting that expert pose to the student's bone lengths. Understand:
+
+- confidence-masked, skill-weighted correction distance;
+- nearest-neighbor reference selection;
+- residual prediction;
+- temporal and spatial self-attention;
+- multi-component geometry losses;
+- train/validation/test separation; and
+- calibration as a separate operation from model training.
+
+### Evaluation Concepts
+
+A high score means the model predicts that little correction is required. It
+does not independently prove that the movement is correct. The current
+calibration deliberately targets a student group mean near 45 and an expert
+group mean near 99. Human per-video grades are still required for independent
+validity testing.
+
+## 2. End-To-End Architecture
+
+```text
+videos for exactly one skill
   |
   v
-scripts/extract_skeleton_sequences.py
+scripts/extract_skeleton_sequences.py --skill <skill>
   -> VideoProcessor.process_frames()
   -> PoseDetector.get_pose()
+  -> direct RTMW3D whole-body 2D/3D pose
+  -> original-frame provenance
   -> estimate_handedness()
-  -> VideoAnalyzer.find_analysis_window()
+  -> VideoAnalyzer.find_analysis_window(skill=...)
   -> normalize_skeleton_sequence()
   -> resample_sequence(64)
-  -> NPZ sequences
+  -> phase_indices + source_frame_indices
+  -> skill-specific NPZ dataset
   |
   v
-python -m badminton_analysis.ml.train_skeleton_corrector
-  -> split experts and students
+python -m badminton_analysis.ml.train_skeleton_corrector --skill <skill>
+  -> split experts and students independently
   -> phase_align_sequence()
-  -> nearest training expert
-  -> project_bone_lengths()
+  -> project_bone_lengths() for each training expert
+  -> skill-weighted nearest adapted expert
   -> SkeletonCorrectionPairDataset
   -> SkeletonDenoiser
-  -> sequence_training_losses()
-  -> checkpoint acceptance gates
-  -> .pt checkpoint with expert reference bank
+  -> skill-weighted training losses
+  -> held-out expert-distance and geometry acceptance gates
+  -> skill-specific checkpoint and expert bank
   |
   v
-python -m badminton_analysis.ml.infer_skeleton_corrector
+python -m badminton_analysis.ml.infer_skeleton_corrector --skill <skill>
   -> predict_correction()
-  -> correction_distance()
+  -> bone-length projection
+  -> skill-weighted correction_distance()
   -> fit_score_calibration()
-  -> phase_grading_details()
-  -> keypoint_advice_details()
-  -> grades, distances, calibration, advice JSONL
+  -> skill-specific criterion allocations
+  -> per-phase/per-joint evidence
+  -> CSV, JSONL, and calibration outputs
   |
   +--> scripts/render_skeleton_correction_video.py
-  |      -> detected and corrected skeleton overlay
+  |      -> detected and corrected skeletons on one video
   |
-  +--> scripts/analyze_clear_with_openai.py
-         -> exact clear criteria and checkpoints
-         -> correction-distance score context
-         -> timestamped zh-TW feedback and joint IDs
-         -> renderer pauses and circles target joints
+  +--> scripts/render_all_skeleton_correction_videos.py --skill <skill>
+  |      -> all student and expert videos with scores
+  |
+  +--> scripts/analyze_skill_with_openai.py --skill <skill>
+         -> exact skill criteria and allowed anchors
+         -> correction score and joint evidence
+         -> validated Traditional Chinese feedback
+         -> timestamped joint IDs for pauses and circles
 ```
 
-## 2. Source Pose Extraction
+## 3. Skill Isolation And Specifications
 
-### Entry point
-
-`scripts/extract_skeleton_sequences.py`
-
-### Runtime prerequisites
-
-The Python project contains PyTorch, OpenCV, OpenAI, and data-processing
-dependencies. The pose extractor additionally requires a compatible OpenMMLab
-stack (`mmengine`, `mmcv`, `mmdet`, and `mmpose`) with the RTMPose/RTMW model
-configs available. Install that stack for the target CUDA/PyTorch environment;
-it is intentionally loaded lazily so scoring and unit tests can run on machines
-without the GPU pose packages.
-
-### Runtime services
-
-- `badminton_analysis/services/pose_detector.py`
-- `badminton_analysis/services/video_processor.py`
-- `badminton_analysis/services/video_analyzer.py`
-
-`PoseDetector` uses a whole-body 2D detector and a 3D pose lifter. The processor
-retains three aligned streams:
+Start at:
 
 ```text
-frames                  original video frames
-original_landmarks      17-joint COCO 3D poses
-body_landmarks_2d       17-joint COCO pixel poses
+badminton_analysis/ml/skill_specs.py
 ```
 
-The 2D stream is used for handedness and video rendering. The 3D stream is used
-for normalization, training, correction, and scoring.
-
-For a new skill, verify that its source videos produce stable shoulders, hips,
-elbows, and wrists before training. Missing data is interpolated for geometry,
-but the original confidence mask remains zero so interpolated samples do not
-receive normal training or scoring weight.
-
-## 3. Handedness
-
-Implementation: `badminton_analysis/ml/handedness.py`
-
-The estimator does not infer handedness from a single pose. It:
-
-1. interpolates left and right wrist trajectories;
-2. subtracts the torso center;
-3. scales motion by shoulder width;
-4. smooths the trajectories;
-5. calculates robust peak wrist speed and positive acceleration;
-6. selects a hand only when its motion score is at least twice the other hand.
-
-Fallback order:
+`SkillCorrectionSpec` is the contract consumed by extraction, training,
+inference, scoring, export, feedback, and rendering. Each skill defines:
 
 ```text
-motion estimate
-  -> datasets/skeleton_sequences/<skill>/handedness_overrides.json
-  -> filename metadata
+skill enum and names
+checkpoint roles
+17 joint weights
+criterion correction windows
+phase evidence windows
+Traditional Chinese qualitative rules
+measured joints
+coaching-circle joints
+allowed grading anchors
+dataset/model/output defaults
 ```
 
-Left-handed samples are converted to a dominant-side canonical representation
-by swapping every left/right COCO joint pair. In 3D, depth is also mirrored to
-preserve chirality. Canonical joint `6` therefore always means dominant shoulder,
-but the renderer maps it back to the person's physical right or left side.
+The four specifications are independent objects. A checkpoint also stores its
+skill, joint weights, and criteria. Inference and rendering reject a checkpoint
+whose skill does not match the requested skill or dataset.
 
-This step must remain before analysis-window detection because the window
-detector follows the dominant wrist and elbow.
-
-## 4. Analysis Window and Phase Anchors
-
-For clear, extraction calls:
-
-```python
-VideoAnalyzer.find_analysis_window(
-    skill=Skill.CLEAR,
-    hand_positions=dominant_wrist,
-    elbow_positions=dominant_elbow,
-)
-```
-
-The result is `(start, peak, end)`. The extracted sequence stores five anchors:
+### Serve Criteria
 
 ```text
-0: start
-1: midpoint(start, peak)
-2: peak
-3: midpoint(peak, end)
-4: end
+10  雙手平舉
+10  將重心放至持拍腳
+20  重心轉移至非持拍腳
+20  髖關節前旋
+20  持拍手手腕發力
+20  肩膀旋轉朝前
 ```
 
-After resampling, clear currently has five sequence-specific phase indices in a
-64-frame clip. Model training warps them to:
+Serve weights emphasize the pelvis, knees, ankles, dominant arm, and shoulder
+because weight transfer and body rotation are part of the qualitative contract.
+
+### Lift Criteria
 
 ```text
-(0, 16, 32, 48, 63)
+10  手腕放置腰部放鬆預備
+25  手腕往後引拍
+35  手腕往前壓
+30  手腕放鬆回到預備姿勢
 ```
 
-For another skill, the first required implementation is a reliable
-skill-specific analysis window. Do not reuse clear's dominant-wrist peak if the
-new skill is defined by foot contact, racket preparation, or another event.
+Lift weights emphasize the dominant shoulder, elbow, and wrist. The final
+criterion explicitly evaluates relaxation and return to the ready position.
 
-## 5. NPZ Data Contract
-
-Each extracted file under
-`datasets/skeleton_sequences/<skill>/{beginners,experts}/` contains:
+### Clear Criteria
 
 ```text
-skeleton_3d       float32 (64, 17, 3)
-skeleton_2d       float32 (64, 17, 2)
-confidence        float32 (64, 17)
-skill             scalar string
-handedness        scalar string: left or right
-video_name        scalar string
-analysis_window   int64 (3,)
-phase_indices     int64 (5,)
-fps               float32 scalar
+10  球拍舉至腰部預備
+10  轉身
+20  雙手手肘平衡
+20  手肘往前轉至前方
+20  手腕發力
+20  慣用手肩膀往前轉
 ```
 
-The generated datasets are runtime artifacts and are not source-controlled.
+### Smash Criteria
 
-## 6. Skeleton Normalization
+Smash retains the same six qualitative names and maxima as clear. It is still a
+separate skill: its joint weights give greater importance to the dominant arm,
+shoulder, hips, and explosive follow-through, and it must be trained and
+calibrated only on smash data.
 
-Implementation: `badminton_analysis/ml/skeleton_normalization.py`
+## 4. Pose Extraction And Frame Provenance
 
-`normalize_skeleton_sequence()` performs:
-
-1. temporal interpolation of missing coordinates;
-2. dominant-side left/right canonicalization;
-3. pelvis centering on every frame;
-4. rotation into a fixed body basis from the first valid frame;
-5. scaling by median shoulder width;
-6. dominant-side depth correction for left-handed 3D poses.
-
-The body basis is fixed for the sequence. This removes camera orientation while
-preserving the player's rotation during the stroke. Recomputing the basis every
-frame would incorrectly remove the torso rotation that the model must learn.
-
-`phase_align_sequence()` then piecewise-linearly maps the sample's five anchors
-onto the canonical phase timeline. `restore_phase_timing()` applies the inverse
-mapping to the predicted correction delta.
-
-## 7. Expert-Guided Training Target
-
-Implementation: `badminton_analysis/ml/train_skeleton_corrector.py`
-
-The 50 expert and 50 student clear clips are split independently:
+Entry point:
 
 ```text
-70% train / 10% validation / 20% test
+scripts/extract_skeleton_sequences.py
 ```
 
-With 50 clips, this is 35 training, 5 validation, and 10 untouched test clips.
+Runtime services:
 
-For each training student:
+```text
+badminton_analysis/services/video_processor.py
+badminton_analysis/services/pose_detector.py
+badminton_analysis/services/video_analyzer.py
+```
 
-1. phase-align the student and all training experts;
-2. compute confidence-masked mean per-joint Euclidean distance;
-3. choose the nearest training expert;
-4. adapt that expert to the student's bone lengths with
-   `project_bone_lengths()`;
-5. use the full adapted expert skeleton as the target.
+`VideoProcessor` does not grade. It returns aligned retained-frame streams:
 
-There is no partial blend between student and expert in v3.
+```text
+frames                    retained RGB frames
+original_landmarks        COCO 3D pose dictionaries
+body_landmarks_2d         COCO 2D pose dictionaries
+wholebody_landmarks       whole-body 2D dictionaries
+source_frame_indices      original frame ID for every retained pose frame
+```
 
-Expert training examples reconstruct their own phase-aligned expert motion.
-Student examples learn the full move to the adapted nearest expert.
+Frames without a usable pose can still be omitted by the current processor,
+but the time axis is no longer anonymous: retained frames keep their original
+frame IDs.
 
-## 8. Model
+The extracted NPZ contains:
+
+```text
+skeleton_3d               (64, 17, 3)
+skeleton_2d               (64, 17, 2)
+confidence                (64, 17)
+skill                     scalar string
+handedness                scalar string
+video_name                scalar string
+analysis_window           start, peak, end in retained-pose space
+phase_indices             five anchors in normalized 0..63 space
+source_frame_indices      original frame ID for every normalized frame
+source_phase_indices      original frame IDs for the five anchors
+fps                       original video FPS
+```
+
+`phase_indices` must be used for model tensors and rendered 64-frame correction
+videos. `source_frame_indices` must be used when sampling the original video.
+
+## 5. Handedness
 
 Implementation:
 
-- `badminton_analysis/ml/models/skeleton_denoiser.py`
-- `badminton_analysis/ml/skeleton_dataset.py`
-
-The accepted model is a separable temporal/spatial Transformer:
-
 ```text
-frames             64
-joints             17
-input features     7 per joint
-model width        128
-attention heads    4
-temporal layers    3
-spatial layers     2
+badminton_analysis/ml/handedness.py
 ```
 
-The seven features are:
+The detector:
+
+1. interpolates both wrist tracks where possible;
+2. normalizes movement by torso scale;
+3. computes wrist acceleration magnitudes;
+4. derives a robust motion score for each side; and
+5. accepts a side only when its score is at least twice the other side.
+
+If the evidence is ambiguous, extraction uses an explicit metadata override or
+the filename fallback. The output records the selected source and confidence
+ratio.
+
+## 6. Skill-Specific Analysis Windows
+
+Implementation:
 
 ```text
-student XYZ          3
-adapted expert XYZ   3
-confidence           1
+VideoAnalyzer.find_analysis_window()
 ```
 
-The model predicts a correction residual, which is added to the student XYZ.
-The result is projected back onto the source skeleton's bone lengths.
+The current structural parser uses dominant wrist and elbow motion:
 
-Training augmentation adds coordinate noise, masks random joints, shifts time,
-and applies coherent limb offsets.
+- clear and smash use the overhead/smash window heuristic;
+- serve uses the serve window heuristic; and
+- lift uses the low backswing followed by the highest-hand completion.
 
-## 9. Training Loss
-
-Implementation: `sequence_training_losses()` in
-`badminton_analysis/ml/skeleton_scoring.py`.
+Every window becomes five anchors:
 
 ```text
-training_loss =
-    position_error
-  + 0.5 * velocity_error
-  + 0.25 * normalized_angle_error
-  + bone_length_error
+start
+midpoint(start, peak)
+peak
+midpoint(peak, end)
+end
 ```
 
-Position and velocity use the configured joint importance weights. Angle loss
-uses eight limb-angle triplets. Bone loss uses the twelve skeleton edges.
+The meaning of those anchors is supplied by the selected skill specification.
+This code does not yet track the shuttle or racket, so a motion peak is not a
+verified shuttle-contact event. Adding hit-centric shuttle/racket parsing is the
+next structural improvement, but is outside the current correction replication.
 
-The model checkpoint is not accepted merely because validation loss decreases.
-The clear acceptance gates require:
+## 7. Skeleton Normalization
+
+Implementation:
 
 ```text
-all validation students improve toward experts
-all corrected validation students enter the expert distance range
-mean corrected distance <= validation expert threshold
-model-to-selected-reference distance <= 0.10
-bounded maximum joint correction
-mean correction acceleration <= 0.04
-p95 relative bone change < 0.001
+badminton_analysis/ml/skeleton_normalization.py
 ```
 
-The accepted clear checkpoint is reference-conditioned and contains its
-training-expert reference bank.
+Normalization performs:
 
-## 10. Inference
+1. interpolation of missing coordinates where evidence exists;
+2. left/right swapping for left-handed players;
+3. depth mirroring to preserve chirality;
+4. pelvis centering;
+5. alignment to a body basis derived from shoulders and torso;
+6. shoulder-width scaling; and
+7. resampling to 64 frames.
 
-Implementation: `predict_correction()` in
-`badminton_analysis/ml/infer_skeleton_corrector.py`.
+Camera translation, body size, and handedness are reduced while relative joint
+geometry and motion remain available.
 
-Inference repeats the training geometry:
+`phase_align_sequence()` then maps the sample's five anchors to the canonical
+timeline. `restore_phase_timing()` maps predicted correction deltas back to the
+sample's timing.
 
-1. phase-align source skeleton and confidence;
-2. find the nearest expert in the checkpoint's reference bank;
-3. adapt the expert to source bone lengths;
-4. concatenate source, reference, and confidence;
-5. run the Transformer;
-6. apply the full residual;
-7. enforce source bone lengths;
-8. restore the correction delta to source phase timing;
-9. enforce source bone lengths again.
+## 8. Expert Pairing And Pseudo-Targets
 
-The corrected skeleton is expected to be close to an actual expert reference.
-That is separately checked with `expert_euclidean_distances()` and is not implied
-by a high calibrated score.
-
-## 11. Correction Distance
-
-The displayed score begins with the difference between the student's original
-skeleton and the corrected skeleton.
-
-Implementation: `correction_distance()` in
-`badminton_analysis/ml/skeleton_scoring.py`.
+Implementation:
 
 ```text
-D =
-    1.00 * position_distance
-  + 0.50 * angle_distance
-  + 0.50 * velocity_distance
-  + 0.25 * bone_length_distance
+badminton_analysis/ml/train_skeleton_corrector.py
+badminton_analysis/ml/skeleton_scoring.py
 ```
 
-Components:
+For source sequence `S`, expert sequence `E_n`, source confidence `C`, and
+expert confidence `C_n`, each reference is first adapted to the student:
 
-- `position_distance`: confidence- and joint-weighted mean 3D displacement;
-- `angle_distance`: confidence-masked normalized limb-angle change;
-- `velocity_distance`: confidence- and joint-weighted motion change;
-- `bone_length_distance`: confidence-masked bone-length change.
+```text
+M_n(t,j) = C(t,j) * C_n(t,j)
+A_n = project_bone_lengths(S, E_n)
 
-The current joint weights emphasize the dominant wrist, dominant elbow, and
-dominant shoulder. This configuration is suitable for an overhead clear. A
-footwork or net skill needs a reviewed weight table rather than blindly reusing
-these weights.
+d_n = correction_distance(S, A_n, M_n, skill_joint_weights)
 
-## 12. Score Calibration
+nearest = argmin_n d_n
+```
 
-Implementation: `fit_score_calibration()` and `ScoreCalibration`.
+The distance is the same weighted position, angle, velocity, and bone metric
+used for grading after phase alignment. It is not cosine similarity or a
+separate embedding score. `project_bone_lengths()` keeps the student's pelvis
+anchor, and the selected complete adapted expert motion is the pseudo-target.
+
+Expert training samples reconstruct their own expert movement. Student samples
+learn the full movement toward their adapted nearest expert. Only experts from
+that skill's training split can enter the checkpoint reference bank.
+
+## 9. Model Input And Architecture
+
+Implementations:
+
+```text
+badminton_analysis/ml/skeleton_dataset.py
+badminton_analysis/ml/models/skeleton_denoiser.py
+```
+
+The reference-conditioned input has seven features per joint:
+
+```text
+[source_x, source_y, source_z,
+ reference_x, reference_y, reference_z,
+ confidence]
+```
+
+The model:
+
+1. projects the seven values into the model dimension;
+2. adds learned joint and time embeddings;
+3. applies temporal Transformer layers independently along each joint track;
+4. applies spatial Transformer layers across all joints in each frame;
+5. predicts a bounded 3D residual; and
+6. adds the residual to the source coordinates.
+
+For newly trained checkpoints, inference then blends the learned output with
+the adapted reference before bone projection:
+
+```text
+guided = 0.50 * model_output + 0.50 * adapted_reference
+```
+
+The blend weight is saved as `reference_guidance` in the checkpoint. Legacy
+checkpoints without that field default to zero. Inference finally projects the
+result back onto the student's bone lengths.
+
+## 10. Training Loss
+
+Implementation:
+
+```text
+sequence_training_losses()
+```
+
+Let `P` be the prediction, `T` the adapted expert target, `M` confidence, and
+`w_j` the selected skill's joint weights.
+
+Position loss is a weighted masked mean:
+
+```text
+L_position = sum(M * w * ||P - T||_2) / sum(M * w)
+```
+
+Velocity loss applies the same calculation to consecutive-frame differences.
+Angle loss compares eight limb/torso angle triplets and normalizes radians by
+pi. Bone loss compares the lengths of the 12 skeleton edges.
+
+```text
+L_train = L_position
+        + 0.50 * L_velocity
+        + 0.25 * L_angle
+        + 1.00 * L_bone
+```
+
+Training augmentation adds coordinate noise, masks joints, shifts time, and
+adds coherent limb offsets.
+
+## 11. Checkpoint Acceptance
+
+A lower validation loss alone does not save a checkpoint. The trainer also
+evaluates corrected validation students. Reference selection is restricted to
+training experts; correctness distances are reported against the union of
+those permitted experts and unseen held-out experts, plus against the unseen
+experts alone.
+
+The default acceptance gates require:
+
+```text
+improved student fraction                 >= 1.0
+within held-out expert range fraction     >= 1.0
+corrected distance                        <= held-out expert p95 range
+reference-to-target distance              <= 0.1
+maximum joint correction                  <= 1.5 * configured bound
+mean correction/reference acceleration    <= 1.10
+p95 relative bone-length change           < 0.001
+```
+
+The acceleration gate compares the predicted correction with the full
+bone-adapted expert correction required for the same input. It rejects added
+jitter without treating the naturally faster clear and smash motions as
+failures. After training, the accepted checkpoint is audited again on the test
+split and all students. Each skill must independently pass these gates.
+
+## 12. Inference And Corrected Skeleton Verification
+
+Implementation:
+
+```text
+badminton_analysis/ml/infer_skeleton_corrector.py
+```
+
+Inference:
+
+1. validates the checkpoint skill;
+2. phase-aligns the source;
+3. adapts every checkpoint training expert to source bone lengths;
+4. selects the adapted expert with the lowest skill-weighted grading distance;
+5. constructs seven-feature input;
+6. predicts the residual correction;
+7. blends the learned output toward the adapted reference using the saved
+   `reference_guidance`;
+8. projects bone lengths;
+9. restores source timing; and
+10. projects bone lengths again.
+
+Training and checkpoint acceptance explicitly measure the Euclidean distance
+between corrected students and experts. The primary acceptance metric uses the
+training-plus-unseen union so it can verify the selected reference directly;
+`corrected_nearest_unseen_expert_distance` is retained as the stricter
+generalization diagnostic. Both are separate from the displayed
+correction-distance score.
+
+## 13. Grading Algorithm
+
+Implementation:
+
+```text
+badminton_analysis/ml/skeleton_scoring.py
+badminton_analysis/ml/infer_skeleton_corrector.py
+```
+
+The displayed score measures the change from original skeleton `S` to corrected
+skeleton `C`, not the raw distance from the student to one unadapted expert.
+
+For the selected skill's joint weights:
+
+```text
+D_position = weighted masked mean(||S - C||_2)
+D_velocity = weighted masked mean(||delta(S) - delta(C)||_2)
+D_angle    = masked mean absolute angle change / pi
+D_bone     = masked mean absolute bone-length change
+
+D = D_position
+  + 0.50 * D_angle
+  + 0.50 * D_velocity
+  + 0.25 * D_bone
+```
+
+The score transform is:
 
 ```text
 score(D) = 100 * exp(-alpha * max(D - offset, 0))
 ```
 
-Current clear calibration:
+`fit_score_calibration()` is run separately for each skill. It searches offsets
+from the complete evaluated expert cohort's correction-distance distribution
+and solves `alpha` so that the complete beginner cohort mean approaches `45.0`
+while the complete expert cohort mean approaches `99.8`.
+
+This is group-fitted diagnostic calibration, not an independent test result.
+The output marks it as `diagnostic_group_calibrated`. Split labels remain in
+the CSV for traceability, but split score means are also affected by the
+full-cohort calibration. Use the held-out Euclidean audits above, not those
+score means, to judge correction-model generalization. A model cannot reuse the
+clear offset or alpha for serve, lift, or smash.
+
+### Criterion Allocations
+
+Each `CorrectionDetailSpec` selects a skill-specific time window and joint set.
+It calculates a local correction distance and maps it through the same skill
+calibration:
 
 ```text
-offset = 0.24125837235747438
-alpha  = 2.680872933195534
+raw criterion grade_k = maximum_k * score(distance_k) / 100
 ```
 
-The fitter searches expert-distance quantiles for the offset and solves alpha
-for the requested student mean. The current target bands are:
+The raw criterion grades are proportionally reconciled so that:
 
 ```text
-students mean = 45
-experts mean  = 99
+sum(criterion grades) = total score
 ```
 
-Current results:
+The criteria therefore explain where the correction is concentrated. They are
+not six or four independent rule graders, and the LLM is not allowed to invent
+or modify their numeric values.
+
+## 14. Score And Evidence Outputs
+
+Inference writes:
 
 ```text
-students: 50 clips, mean 45.00
-experts:  50 clips, mean 99.90
+grading_results.csv       full rows and criterion allocations
+all_grades.csv            compact score list
+score_summary.csv         group statistics and separation
+distance_components.csv   total distance components
+keypoint_scores.csv       joint and phase evidence
+advice_context.jsonl      structured context for coaching
+calibration.json          fitted score parameters
 ```
 
-This is group calibration, not human validation. The student mean is a fitted
-target, so it cannot be cited as independent proof of score accuracy. Before
-production use, fit a grade mapping on per-video human labels and evaluate MAE,
-rank correlation, and calibration on a held-out set.
+`keypoint_advice_details()` assigns each joint:
 
-## 13. Six Criterion Scores
+- total correction distance and score;
+- position, angle, velocity, and bone components;
+- skill-specific importance weight;
+- worst skill phase;
+- correction direction and vector; and
+- per-phase scores and distances.
 
-Implementation: `DETAILS` and `phase_grading_details()` in
-`badminton_analysis/ml/infer_skeleton_corrector.py`.
-
-Clear maps six correction windows to the existing six criterion maxima:
-
-```text
-Preparation correction       10
-Rotation correction          10
-Balance correction           20
-Contact correction           20
-Wrist/arm correction         20
-Follow-through correction    20
-```
-
-Each detail first receives its own calibrated correction-distance score. The six
-details are then proportionally reconciled so their sum equals the total score.
-They are explanatory allocations of the total, not six independently calibrated
-human rubric grades.
-
-`keypoint_advice_details()` also attributes position, angle, velocity, and bone
-distance to individual joints and phases. These values feed coaching evidence;
-they must not be summed to reconstruct the total.
-
-## 14. OpenAI Coaching Pass
+## 15. Traditional Chinese LLM Coaching
 
 Implementations:
 
-- `badminton_analysis/ml/clear_feedback.py`
-- `scripts/analyze_clear_with_openai.py`
-- `scripts/render_skeleton_correction_video.py`
-
-The model receives:
-
-- ordered checkpoint-aware images;
-- handedness and canonical/physical-side explanation;
-- the exact six clear criterion names and technical definitions;
-- current expert angle means and standard deviations;
-- correction-distance total, components, and six detail scores;
-- lowest keypoint correction scores and directions.
-
-The structured response is restricted to:
-
-- `language = zh-TW`;
-- one to three exact criterion names;
-- an allowed original checkpoint for each criterion;
-- canonical coaching target joint IDs;
-- Traditional Chinese feedback and visual evidence.
-
-After the response, criterion scores and coaching joint IDs are attached
-deterministically from the correction results. The renderer:
-
-1. overlays detected skeleton in cyan;
-2. overlays corrected skeleton in green;
-3. pauses two seconds at each reported frame;
-4. circles the detected joints that require attention;
-5. labels the physical dominant shoulder side;
-6. shows the correction-distance total and criterion allocation.
-
-The API key is loaded from `.env` and is never written to prompt artifacts.
-
-## 15. Generated Artifacts
-
-Core inference writes:
-
 ```text
-grading_results.csv       full rows and six detail scores
-all_grades.csv            compact score export
-distance_components.csv   raw distance components and quality metrics
-score_summary.csv         group means and separation
-calibration.json          offset and alpha
-keypoint_scores.csv       per-joint/per-phase evidence
-advice_context.jsonl      ranked language-model context
+badminton_analysis/ml/clear_feedback.py
+scripts/analyze_skill_with_openai.py
 ```
 
-Coaching writes:
+Despite the historical filename `clear_feedback.py`, the module now validates
+all four skill contracts. It keeps clear-compatible exports for the committed
+pipeline.
+
+The prompt contains:
+
+- exactly one selected skill;
+- that skill's exact Traditional Chinese criteria;
+- permitted normalized grading anchors per criterion;
+- measured and coaching-circle joint IDs;
+- handedness and physical-side explanation;
+- correction total, components, and allocations;
+- lowest joint scores and correction directions; and
+- ordered high-detail images.
+
+Pydantic and post-response validation reject:
+
+- a different or unsupported skill;
+- an unknown or cross-skill criterion;
+- a title that does not exactly match its rule ID;
+- a phase that does not match the criterion;
+- joints outside the measured criterion contract;
+- a frame outside the supplied images;
+- a frame outside the criterion's allowed anchors; and
+- non-Chinese feedback text.
+
+After validation, coaching joint IDs are deterministically replaced with the
+configured physical coaching targets. The LLM cannot select the wrong shoulder
+for a left-handed player.
+
+`--video-frame-space normalized` samples a generated 64-frame correction video.
+`--video-frame-space source` uses the stored original-frame mapping when
+sampling the raw source video.
+
+## 16. Rendering
+
+Implementations:
 
 ```text
-input_frames/
-prompt_context.json
-feedback.json
-feedback.csv
-annotated_feedback_h264.mp4
+scripts/render_skeleton_correction_video.py
+scripts/render_all_skeleton_correction_videos.py
+scripts/render_skeleton_correction_overlays.py
 ```
 
-Generated datasets, statistics, and videos are intentionally not committed to
-Git. The accepted v3 checkpoint and its calibration are committed so a clean
-checkout can run inference.
+The renderer:
 
-## 16. Reproducing Clear
+1. re-extracts pixel skeletons from the source video;
+2. resamples them to the model's 64-frame timeline;
+3. fits the corrected 3D pose to the detected 2D pose;
+4. overlays detected and corrected skeletons;
+5. displays the calibrated score beside the name;
+6. maps canonical dominant joints back to the physical body side;
+7. pauses at validated feedback frames;
+8. circles deterministic coaching joints; and
+9. renders concise Traditional Chinese advice.
+
+Generated video outputs remain ignored by Git.
+
+## 17. Recommended Code-Tracing Order
+
+Read the files in this order.
+
+### Pass 1: Contracts And Entry Points
+
+1. `badminton_analysis/models/types.py`
+2. `badminton_analysis/ml/skill_specs.py`
+3. `scripts/extract_skeleton_sequences.py`
+4. `badminton_analysis/ml/train_skeleton_corrector.py:main()`
+5. `badminton_analysis/ml/infer_skeleton_corrector.py:main()`
+
+At the end of this pass, you should know which skill is selected, where its
+artifacts live, and the high-level call graph.
+
+### Pass 2: Video To Model Tensor
+
+1. `badminton_analysis/services/video_processor.py`
+2. `badminton_analysis/services/pose_detector.py`
+3. `badminton_analysis/ml/handedness.py`
+4. `badminton_analysis/services/video_analyzer.py`
+5. `badminton_analysis/ml/skeleton_normalization.py`
+6. `badminton_analysis/ml/skeleton_dataset.py`
+
+Track these values on paper:
+
+```text
+original frame ID
+retained pose frame ID
+analysis start/peak/end
+normalized frame ID
+five phase anchors
+source-frame mapping
+handedness canonicalization
+```
+
+### Pass 3: Target Construction And Training
+
+1. `_load_aligned()`
+2. `_load_expert_bank()`
+3. `_build_student_targets()`
+4. `select_bone_adapted_expert()`
+5. `project_bone_lengths()` and `correction_distance()`
+6. `SkeletonCorrectionPairDataset.__getitem__()`
+7. `SkeletonDenoiser.forward()`
+8. `sequence_training_losses()`
+9. `_evaluate_expert_distance()`
+10. the checkpoint acceptance block in `train_skeleton_corrector.py`
+
+Verify that only the selected skill's training experts enter the reference bank.
+
+### Pass 4: Inference And Grades
+
+1. `load_corrector()`
+2. `predict_correction()`
+3. `correction_distance_components()`
+4. `correction_distance()`
+5. `fit_score_calibration()`
+6. `phase_grading_details()`
+7. `keypoint_advice_details()`
+8. `SkeletonCorrectionBackend.score()`
+9. `badminton_analysis/tools/grade_students.py`
+
+Calculate one sample manually through `D` and the exponential score transform
+before reading the CSV export code.
+
+### Pass 5: Coaching And Video
+
+1. `badminton_analysis/ml/clear_feedback.py`
+2. `scripts/analyze_skill_with_openai.py`
+3. `scripts/render_skeleton_correction_video.py`
+4. `scripts/render_all_skeleton_correction_videos.py`
+
+Confirm that criterion names, frames, phases, and circle joints all come from
+the selected `SkillCorrectionSpec`.
+
+### Pass 6: Tests
+
+Read:
+
+```text
+tests/test_skill_specs.py
+tests/test_skeleton_correction.py
+tests/test_clear_feedback.py
+tests/test_grade_students.py
+tests/test_video_processor.py
+```
+
+The tests provide small executable examples of every important contract.
+
+## 18. Reproducing One Skill
+
+Run each skill separately. For example, lift:
 
 ```bash
-.venv/bin/python scripts/extract_skeleton_sequences.py
+.venv/bin/python scripts/extract_skeleton_sequences.py \
+  --skill lift \
+  --beginner-dir /path/to/lift/students \
+  --expert-dir /path/to/lift/experts
 
 .venv/bin/python -m badminton_analysis.ml.train_skeleton_corrector \
-  --dataset-root datasets/skeleton_sequences/clear \
-  --model-path models/skeleton_correction/clear_expert_guided_v3.pt
+  --skill lift
 
 .venv/bin/python -m badminton_analysis.ml.infer_skeleton_corrector \
-  --dataset-root datasets/skeleton_sequences/clear \
-  --model-path models/skeleton_correction/clear_expert_guided_v3.pt \
-  --output-dir stats/skeleton_correction/clear_expert_guided_v3_grades
+  --skill lift
 
-.venv/bin/python scripts/export_clear_correction_scores.py
+.venv/bin/python scripts/export_correction_scores.py \
+  --skill lift
 
-.venv/bin/python scripts/analyze_clear_with_openai.py \
-  --video-path stats/skeleton_correction/clear_expert_guided_v3_videos/students/EG3.mp4 \
-  --dataset-path datasets/skeleton_sequences/clear/beginners/EG3.npz \
-  --output-dir stats/openai_clear_feedback/EG3
+.venv/bin/python scripts/render_all_skeleton_correction_videos.py \
+  --skill lift \
+  --student-video-dir /path/to/lift/students \
+  --expert-video-dir /path/to/lift/experts
 ```
 
-## 17. Adding Another Skill
-
-Do not copy the clear module and only change directory names. Perform these
-steps explicitly:
-
-1. **Define the skill phase contract.**
-   Specify start, peak/contact, end, and five monotonic anchors.
-
-2. **Implement analysis-window detection.**
-   Choose the joints and events that define the skill. Footwork should not use
-   the clear wrist peak.
-
-3. **Review handedness relevance.**
-   Decide whether dominant-side canonicalization is appropriate. Some footwork
-   skills may need stroke direction or court side instead.
-
-4. **Create isolated dataset paths.**
-   Use `datasets/skeleton_sequences/<skill>/...`; never mix expert banks across
-   skills.
-
-5. **Define joint and phase importance.**
-   Replace clear's upper-body-heavy `JOINT_WEIGHTS`, `DETAILS`, and
-   `KEYPOINT_PHASES` with reviewed skill-specific values.
-
-6. **Define coaching criteria.**
-   Add exact criterion names, allowed frames, measured joints, coaching target
-   joints, and Traditional Chinese wording.
-
-7. **Train a separate checkpoint.**
-   Use only that skill's experts and preserve independent train, validation, and
-   untouched test splits.
-
-8. **Measure natural expert variability.**
-   Use leave-one-out expert distance to define the geometry acceptance range.
-
-9. **Run geometry gates before score calibration.**
-   Verify every held-out correction moves toward experts and visually inspect
-   low, middle, and high corrections.
-
-10. **Fit a skill-specific calibration.**
-    Never reuse clear's offset or alpha. Prefer human per-video grades; group
-    target fitting is diagnostic only.
-
-11. **Validate criterion attribution.**
-    Ensure every displayed criterion score is tied to the intended phase and
-    joints and that all six allocations sum to the total.
-
-12. **Validate the coaching video.**
-    Check physical handedness, circled joints, pause frame, Traditional Chinese
-    text, and overlay alignment.
-
-## 18. Recommended Refactor Before Many Skills
-
-Clear-specific constants are still distributed across scripts. Before the
-second or third skill, introduce a `SkillCorrectionSpec` containing:
+Then inspect, in order:
 
 ```text
-skill identifier
-source video groups
-analysis-window callback
-canonical phase anchors
-joint weights
-detail phase windows and maxima
-criterion names and rule references
-allowed feedback frames
-coaching target joints
-dataset/checkpoint/output paths
+dataset summary
+training pair CSV
+expert variability JSON
+validation acceptance metrics
+test expert-distance audit
+grading results
+group score summary
+keypoint evidence
+rendered skeleton videos
+LLM prompt context and feedback
 ```
 
-Then make extraction, training, inference, score export, and coaching consume the
-spec. Keep the model and scoring primitives skill-agnostic. This avoids a family
-of nearly identical scripts with silently different scoring behavior.
+Do not copy a calibration file from another skill, do not mix experts across
+skills, and do not treat a passed group-separation target as human validation.
