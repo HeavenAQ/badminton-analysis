@@ -9,6 +9,7 @@ import pandas as pd
 from badminton_analysis.ml.handedness import estimate_handedness, interpolated_keypoint
 from badminton_analysis.ml.skeleton_backend import SkeletonCorrectionBackend
 from badminton_analysis.ml.skeleton_normalization import landmark_dicts_to_array
+from badminton_analysis.ml.skill_specs import get_skill_spec, supported_skill_choices
 from badminton_analysis.models.types import (
     COCOKeypoints,
     GradingDetail,
@@ -20,7 +21,7 @@ from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.services.video_processor import VideoProcessor
 
 VIDEO_EXTENSIONS = (".mp4", ".mov")
-DEFAULT_MODEL_PATH = "models/skeleton_correction/clear_expert_guided_v3.pt"
+DEFAULT_MODEL_PATH = str(get_skill_spec(Skill.CLEAR).model_path)
 
 
 def _flatten_details(details: list[GradingDetail]) -> dict[str, Any]:
@@ -85,13 +86,16 @@ def grade_videos_in_dir(
     input_dir: str,
     output_dir: str,
     *,
-    model_path: str = DEFAULT_MODEL_PATH,
+    skill: Skill = Skill.CLEAR,
+    model_path: str | None = None,
     calibration_path: str | None = None,
     handedness: str = "auto",
 ) -> tuple[list[dict[str, Any]], int]:
     source_dir = Path(input_dir)
     destination_dir = Path(output_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
+    spec = get_skill_spec(skill)
+    resolved_model_path = model_path or str(spec.model_path)
     videos = sorted(
         path
         for path in source_dir.iterdir()
@@ -102,7 +106,7 @@ def grade_videos_in_dir(
 
     pose_detector = PoseDetector()
     backend = SkeletonCorrectionBackend(
-        model_path,
+        resolved_model_path,
         calibration_path=calibration_path,
     )
     rows: list[dict[str, Any]] = []
@@ -122,11 +126,11 @@ def grade_videos_in_dir(
             resolved_handedness = _resolve_handedness(tracking, handedness)
             _populate_dominant_motion(tracking, resolved_handedness)
             grade, window, diagnostics = backend.score(
-                tracking, resolved_handedness, Skill.CLEAR
+                tracking, resolved_handedness, skill
             )
             row: dict[str, Any] = {
                 "filename": video_path.name,
-                "skill": str(Skill.CLEAR),
+                "skill": spec.slug,
                 "handedness": str(resolved_handedness),
                 "status": "success",
                 "error": "",
@@ -142,7 +146,7 @@ def grade_videos_in_dir(
             failures += 1
             row = {
                 "filename": video_path.name,
-                "skill": str(Skill.CLEAR),
+                "skill": spec.slug,
                 "handedness": (
                     str(resolved_handedness) if resolved_handedness is not None else ""
                 ),
@@ -160,12 +164,15 @@ def grade_videos_in_dir(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Score clear videos with the skeleton-correction model",
+        description="Score badminton videos with a skill-specific skeleton corrector",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
+    parser.add_argument(
+        "--skill", choices=supported_skill_choices(), default="clear"
+    )
+    parser.add_argument("--model-path")
     parser.add_argument("--calibration-path")
     parser.add_argument(
         "--handedness",
@@ -185,6 +192,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows, failures = grade_videos_in_dir(
             args.input_dir,
             args.output_dir,
+            skill=Skill.convert_to_enum(args.skill),
             model_path=args.model_path,
             calibration_path=args.calibration_path,
             handedness=args.handedness,

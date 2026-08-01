@@ -137,13 +137,23 @@ class VideoAnalyzer:
         hand_positions: list[Coordinate],
         elbow_positions: list[Coordinate],
     ) -> tuple[int, int, int]:
-        start_frame, _, end_frame = cls.find_acc_analysis_window(hand_positions)
-        idx = np.argmin(np.asarray(hand_positions)[start_frame:end_frame, 1])
+        start_frame, _, acceleration_end_frame = cls.find_acc_analysis_window(
+            hand_positions
+        )
+        idx = np.argmin(
+            np.asarray(hand_positions)[start_frame : acceleration_end_frame + 1, 1]
+        )
         new_peak = int(idx + start_frame)
         new_start = max(0, new_peak - IMPACT_FRAME_SEARCH_WINDOW_BEFORE)
         new_end = int(
-            np.argmax(np.asarray(elbow_positions)[new_peak:end_frame, 1]) + new_peak
+            np.argmax(
+                np.asarray(elbow_positions)[new_peak : acceleration_end_frame + 1, 1]
+            )
+            + new_peak
         )
+        if new_end - new_peak < 2:
+            new_end = max(acceleration_end_frame, new_peak + 2)
+        new_end = min(len(hand_positions) - 1, new_end)
         return new_start, new_peak, new_end
 
     @classmethod
@@ -155,6 +165,7 @@ class VideoAnalyzer:
         start_frame, peak_frame, end_frame = cls.find_acc_analysis_window(
             hand_positions
         )
+        acceleration_end_frame = end_frame
         sub_range_positions = hand_positions[int(start_frame) : int(end_frame)]
         arr = np.asarray(sub_range_positions, dtype=np.float64)
         if arr.size > 0:
@@ -170,8 +181,10 @@ class VideoAnalyzer:
             int(np.argmax(composite_metric)) if composite_metric.size > 0 else 0
         )
         end_frame = int(peak_frame) + int(relative_end_index)
+        if end_frame - peak_frame < 2:
+            end_frame = max(acceleration_end_frame, peak_frame + 2)
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
-        final_end_frame = min(len(hand_positions), end_frame)
+        final_end_frame = min(len(hand_positions) - 1, end_frame)
         return int(start_frame), int(peak_frame), int(final_end_frame)
 
     @classmethod
@@ -183,6 +196,7 @@ class VideoAnalyzer:
         start_frame, peak_frame, end_frame = cls.find_acc_analysis_window(
             hand_positions
         )
+        acceleration_end_frame = end_frame
         sub_range_positions = hand_positions[int(start_frame) : int(end_frame)]
         arr = np.asarray(sub_range_positions, dtype=np.float64)
         if arr.size > 0:
@@ -202,6 +216,8 @@ class VideoAnalyzer:
             end_frame = int(peak_frame) + highest_hand_relative_index
 
         start_frame = max(0, peak_frame - ANALYSIS_WINDOW_PADDING_BEFORE)
+        if end_frame - peak_frame < 2:
+            end_frame = max(acceleration_end_frame, peak_frame + 2)
         end_frame = max(int(peak_frame), min(len(hand_positions) - 1, int(end_frame)))
         return int(start_frame), int(peak_frame), int(end_frame)
 

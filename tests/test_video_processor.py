@@ -5,6 +5,7 @@ import pytest
 
 from badminton_analysis.services.video_analyzer import VideoAnalyzer
 from badminton_analysis.services.video_processor import VideoProcessor
+from badminton_analysis.models.types import Skill
 
 
 def test_video_processor_accepts_shared_pose_detector() -> None:
@@ -54,3 +55,40 @@ def test_compute_angles_handles_missing_landmarks() -> None:
     result = VideoAnalyzer().compute_angles({})
 
     assert all(angle == 0.0 for angle in result.values())
+
+
+@pytest.mark.parametrize("skill", (Skill.SERVE, Skill.LIFT))
+def test_analysis_window_keeps_follow_through_after_peak(
+    monkeypatch: pytest.MonkeyPatch, skill: Skill
+) -> None:
+    monkeypatch.setattr(
+        VideoAnalyzer,
+        "find_acc_analysis_window",
+        classmethod(lambda cls, positions: (10, 40, 70)),
+    )
+    hand_positions = np.zeros((100, 2), dtype=np.float64)
+    hand_positions[40, 1] = 10.0
+    elbow_positions = np.zeros((100, 2), dtype=np.float64)
+
+    start, peak, end = VideoAnalyzer.find_analysis_window(
+        skill=skill,
+        hand_positions=list(hand_positions),
+        elbow_positions=list(elbow_positions),
+    )
+
+    assert (start, peak, end) == (10, 40, 70)
+
+
+@pytest.mark.parametrize("skill", (Skill.CLEAR, Skill.SMASH))
+def test_overhead_window_never_ends_at_impact(skill: Skill) -> None:
+    hand_positions = np.zeros((100, 2), dtype=np.float64)
+    hand_positions[50, 1] = -10.0
+    elbow_positions = np.zeros((100, 2), dtype=np.float64)
+
+    _, peak, end = VideoAnalyzer.find_analysis_window(
+        skill=skill,
+        hand_positions=list(hand_positions),
+        elbow_positions=list(elbow_positions),
+    )
+
+    assert end - peak >= 2

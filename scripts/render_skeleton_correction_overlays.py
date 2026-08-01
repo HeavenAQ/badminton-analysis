@@ -16,6 +16,12 @@ from badminton_analysis.ml.infer_skeleton_corrector import (
 )
 from badminton_analysis.ml.skeleton_dataset import load_sequence
 from badminton_analysis.ml.skeleton_scoring import correction_distance
+from badminton_analysis.ml.skill_specs import (
+    SkillCorrectionSpec,
+    get_skill_spec,
+    supported_skill_choices,
+    validate_checkpoint_spec,
+)
 
 BONES = (
     (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
@@ -65,6 +71,7 @@ def render_overlay(
     corrected: np.ndarray,
     confidence: np.ndarray,
     phase_indices: np.ndarray,
+    spec: SkillCorrectionSpec,
 ) -> None:
     width, height = 1800, 720
     canvas = np.full((height, width, 3), 248, dtype=np.uint8)
@@ -115,6 +122,7 @@ def render_overlay(
             original[max(0, int(frame_index) - 2) : int(frame_index) + 3],
             corrected[max(0, int(frame_index) - 2) : int(frame_index) + 3],
             confidence[max(0, int(frame_index) - 2) : int(frame_index) + 3],
+            joint_weights=spec.joint_weights_array,
         )
         cv2.putText(
             canvas,
@@ -136,15 +144,12 @@ def render_overlay(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Render skeleton correction debug overlays")
     parser.add_argument(
-        "--results-path",
-        default="stats/skeleton_correction/clear_feasibility/grading_results.csv",
+        "--skill", choices=supported_skill_choices(), default="clear"
     )
-    parser.add_argument("--dataset-root", default="datasets/skeleton_sequences/clear")
-    parser.add_argument(
-        "--model-path",
-        default="models/skeleton_correction/clear_expert_guided_v3.pt",
-    )
-    parser.add_argument("--output-dir", default="stats/skeleton_correction/clear_debug_overlays")
+    parser.add_argument("--results-path")
+    parser.add_argument("--dataset-root")
+    parser.add_argument("--model-path")
+    parser.add_argument("--output-dir")
     parser.add_argument("--count", type=int, default=10)
     parser.add_argument("--device", default="auto")
     return parser
@@ -152,14 +157,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    spec = get_skill_spec(args.skill)
+    results_path = (
+        Path(args.results_path)
+        if args.results_path
+        else spec.grading_output_dir / "grading_results.csv"
+    )
+    dataset_root = Path(args.dataset_root) if args.dataset_root else spec.dataset_root
+    model_path = Path(args.model_path) if args.model_path else spec.model_path
     device = torch.device(
         "cuda" if args.device == "auto" and torch.cuda.is_available() else
         "cpu" if args.device == "auto" else args.device
     )
-    model, checkpoint = load_corrector(args.model_path, device)
+    model, checkpoint = load_corrector(model_path, device)
+    validate_checkpoint_spec(checkpoint, spec)
     phase_aligned = bool(checkpoint.get("phase_aligned", False))
     correction_strength = float(checkpoint.get("inference_strength", 1.0))
-    results = pd.read_csv(args.results_path)
+    reference_guidance = float(checkpoint.get("reference_guidance", 0.0))
+    results = pd.read_csv(results_path)
     beginners = results[results["label"] == "beginners"]
     experts = results[results["label"] == "experts"]
     random_count = min(args.count, len(results))
@@ -169,15 +184,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "lowest_experts": experts.nsmallest(args.count, "total_grade"),
         "random": results.sample(random_count, random_state=2026),
     }
-    output_dir = Path(args.output_dir)
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir
+        else Path("stats/skeleton_correction") / f"{spec.slug}_debug_overlays"
+    )
     for group_name, rows in selections.items():
         group_dir = output_dir / group_name
         group_dir.mkdir(parents=True, exist_ok=True)
         for old_overlay in group_dir.glob("*.png"):
             old_overlay.unlink()
         for rank, row in enumerate(rows.itertuples(index=False), start=1):
-            dataset_path = Path(args.dataset_root) / row.label / f"{Path(row.filename).stem}.npz"
+            dataset_path = dataset_root / row.label / f"{Path(row.filename).stem}.npz"
             sample = load_sequence(dataset_path)
+            sample_skill = str(sample["skill"].item())
+            if sample_skill != spec.slug:
+                raise ValueError(
+                    f"dataset skill is {sample_skill}, but --skill is {spec.slug}"
+                )
             skeleton = sample["skeleton_3d"].astype(np.float32)
             confidence = sample["confidence"].astype(np.float32)
             corrected = predict_correction(
@@ -187,6 +211,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 device,
                 sample["phase_indices"] if phase_aligned else None,
                 correction_strength,
+                reference_guidance,
             )
             render_overlay(
                 group_dir / f"{rank:02d}_{_safe_name(row.filename)}.png",
@@ -196,6 +221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corrected,
                 confidence,
                 sample["phase_indices"],
+                spec,
             )
     print(f"Wrote correction overlays to {output_dir}")
     return 0

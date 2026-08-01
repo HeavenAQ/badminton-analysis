@@ -38,6 +38,7 @@ class VideoProcessor:
         self.logger = Logger(self.__class__.__name__)
         self.pose_detector = pose_detector or PoseDetector()
         self.time_intervals: list[float] = []
+        self.source_frame_indices: list[int] = []
 
         # Buffers
         self.frames: list[NDArray[np.uint8]] = []
@@ -52,8 +53,10 @@ class VideoProcessor:
         cap: cv2.VideoCapture,
         frame_queue: Queue[NDArray[Any]],
         timestamp_queue: Queue[float],
+        frame_index_queue: Queue[int],
     ) -> None:
         prev_time = time.perf_counter()
+        frame_index = 0
         while cap.isOpened():
             success, frame = cap.read()
             if not success:
@@ -65,6 +68,8 @@ class VideoProcessor:
             if not frame_queue.full():
                 frame_queue.put(frame.copy())
                 timestamp_queue.put(time_interval)
+                frame_index_queue.put(frame_index)
+            frame_index += 1
         cap.release()
 
     def process_frames(self, handedness: int | None) -> TrackingData:
@@ -75,6 +80,7 @@ class VideoProcessor:
 
         frame_queue: Queue[NDArray[Any]] = Queue()
         timestamp_queue: Queue[float] = Queue()
+        frame_index_queue: Queue[int] = Queue()
         capture_thread = threading.Thread(
             target=self.__frame_capture,
             daemon=True,
@@ -82,6 +88,7 @@ class VideoProcessor:
                 cap,
                 frame_queue,
                 timestamp_queue,
+                frame_index_queue,
             ),
         )
         capture_thread.start()
@@ -90,6 +97,7 @@ class VideoProcessor:
             if not frame_queue.empty():
                 frame = frame_queue.get()
                 time_interval = timestamp_queue.get()
+                source_frame_index = frame_index_queue.get()
                 self.time_intervals.append(time_interval)
                 results_3d = self.pose_detector.get_pose(frame)
                 landmark_3d = self.pose_detector.get_3d_landmarks(results_3d)
@@ -133,6 +141,7 @@ class VideoProcessor:
                             np.asarray(landmark_2d[elbow], dtype=np.float64)
                         )
                     self.frames.append(frame.copy())
+                    self.source_frame_indices.append(source_frame_index)
             else:
                 if not capture_thread.is_alive():
                     break
@@ -146,5 +155,6 @@ class VideoProcessor:
             "hand_positions": self.hand_positions,
             "elbow_positions": self.elbow_positions,
             "time_intervals": self.time_intervals,
+            "source_frame_indices": self.source_frame_indices,
             "wholebody_landmarks": self.wholebody_landmarks,
         }

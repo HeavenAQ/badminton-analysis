@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ import torch
 from badminton_analysis.ml.infer_skeleton_corrector import (
     load_corrector,
     phase_grading_details,
-    predict_correction,
+    predict_correction_with_reference,
 )
 from badminton_analysis.ml.skeleton_normalization import (
     landmark_dicts_to_array,
@@ -23,6 +24,7 @@ from badminton_analysis.ml.skeleton_scoring import (
     correction_distance,
     correction_quality_metrics,
 )
+from badminton_analysis.ml.skill_specs import get_skill_spec, validate_checkpoint_spec
 from badminton_analysis.models.types import (
     GradingDetail,
     GradingOutcome,
@@ -90,9 +92,26 @@ class SkeletonCorrectionBackend:
         else:
             self.device = torch.device(device)
         self.model, checkpoint = load_corrector(self.model_path, self.device)
+        self.checkpoint = checkpoint
+        self.spec = get_skill_spec(str(checkpoint.get("skill", "clear")))
+        validate_checkpoint_spec(checkpoint, self.spec)
         self.target_frames = int(checkpoint.get("sequence_frames", 64))
         self.phase_aligned = bool(checkpoint.get("phase_aligned", False))
         self.correction_strength = float(checkpoint.get("inference_strength", 1.0))
+        self.reference_guidance = float(checkpoint.get("reference_guidance", 0.0))
+        self.expert_training_files = tuple(
+            str(value) for value in checkpoint.get("expert_training_files", ())
+        )
+        self.inference_session: Any | None = None
+        self.inference_providers: tuple[str, ...] = ()
+        execution_provider = os.getenv(
+            "SKELETON_EXECUTION_PROVIDER", "pytorch"
+        ).lower()
+        if execution_provider != "pytorch":
+            self.inference_session = self._load_onnx_session(execution_provider)
+            self.inference_providers = tuple(
+                self.inference_session.get_providers()
+            )
         calibration_file = (
             Path(calibration_path)
             if calibration_path is not None
@@ -105,30 +124,112 @@ class SkeletonCorrectionBackend:
         calibration_values = json.loads(calibration_file.read_text(encoding="utf-8"))
         self.calibration = ScoreCalibration(**calibration_values)
 
+    def _load_onnx_session(self, execution_provider: str) -> Any:
+        import onnxruntime as ort  # type: ignore[import-not-found]
+
+        onnx_path = self.model_path.with_suffix(".onnx")
+        if not onnx_path.exists():
+            raise ValueError(f"correction ONNX model not found: {onnx_path}")
+        device_id = int(os.getenv("ONNXRUNTIME_DEVICE_ID", "0"))
+        available = set(ort.get_available_providers())
+        if execution_provider == "tensorrt":
+            if "TensorrtExecutionProvider" not in available:
+                raise RuntimeError("TensorRT correction provider is unavailable")
+            cache_root = Path(
+                os.getenv(
+                    "POSE_TENSORRT_CACHE_DIR",
+                    "/app/models/tensorrt-cache",
+                )
+            )
+            cache_path = cache_root / "correctors" / self.spec.slug
+            cache_path.mkdir(parents=True, exist_ok=True)
+            providers: list[Any] = [
+                (
+                    "TensorrtExecutionProvider",
+                    {
+                        "device_id": device_id,
+                        "trt_engine_cache_enable": True,
+                        "trt_engine_cache_path": str(cache_path),
+                        "trt_engine_cache_prefix": (
+                            f"skeleton_{self.spec.slug}"
+                        ),
+                        "trt_fp16_enable": True,
+                        "trt_engine_hw_compatible": True,
+                        "trt_timing_cache_enable": True,
+                    },
+                ),
+                ("CUDAExecutionProvider", {"device_id": device_id}),
+                "CPUExecutionProvider",
+            ]
+        elif execution_provider == "cuda":
+            if "CUDAExecutionProvider" not in available:
+                raise RuntimeError("CUDA correction provider is unavailable")
+            providers = [
+                ("CUDAExecutionProvider", {"device_id": device_id}),
+                "CPUExecutionProvider",
+            ]
+        else:
+            raise ValueError(
+                "SKELETON_EXECUTION_PROVIDER must be pytorch, tensorrt, or cuda"
+            )
+        session = ort.InferenceSession(str(onnx_path), providers=providers)
+        active = tuple(session.get_providers())
+        expected = (
+            "TensorrtExecutionProvider"
+            if execution_provider == "tensorrt"
+            else "CUDAExecutionProvider"
+        )
+        if not active or active[0] != expected:
+            raise RuntimeError(
+                f"{expected} did not activate for {self.spec.slug}: {active}"
+            )
+        return session
+
     def score(
         self,
         tracking: TrackingData,
         handedness: Handedness,
         skill: Skill,
     ) -> tuple[GradingOutcome, tuple[int, int, int], dict[str, Any]]:
-        if skill != Skill.CLEAR:
-            raise ValueError("skeleton-correction currently supports clear only")
+        if skill != self.spec.skill:
+            raise ValueError(
+                f"checkpoint supports {self.spec.slug}, but requested skill is {skill}"
+            )
         skeleton, confidence, window, phases = tracking_to_normalized_sequence(
             tracking,
             handedness,
             skill=skill,
             target_frames=self.target_frames,
         )
-        corrected = predict_correction(
-            self.model,
-            skeleton,
-            confidence,
-            self.device,
-            phases if self.phase_aligned else None,
-            self.correction_strength,
+        grade, _, diagnostics = self.score_sequence(
+            skeleton, confidence, phases
+        )
+        return grade, window, diagnostics
+
+    def score_sequence(
+        self,
+        skeleton: np.ndarray,
+        confidence: np.ndarray,
+        phases: np.ndarray,
+    ) -> tuple[GradingOutcome, np.ndarray, dict[str, Any]]:
+        corrected, reference_index, reference_distance = (
+            predict_correction_with_reference(
+                self.model,
+                skeleton,
+                confidence,
+                self.device,
+                phases if self.phase_aligned else None,
+                self.correction_strength,
+                self.reference_guidance,
+                joint_weights=self.spec.joint_weights_array,
+                inference_session=self.inference_session,
+            )
         )
         total_distance, components = correction_distance(
-            skeleton, corrected, confidence
+            skeleton,
+            corrected,
+            confidence,
+            joint_weights=self.spec.joint_weights_array,
         )
         quality = correction_quality_metrics(skeleton, corrected, confidence)
         total_grade = float(self.calibration.score(total_distance))
@@ -140,6 +241,7 @@ class SkeletonCorrectionBackend:
                 confidence,
                 self.calibration,
                 total_grade,
+                self.spec,
             )
         ]
         diagnostics: dict[str, Any] = {
@@ -148,9 +250,25 @@ class SkeletonCorrectionBackend:
             **quality,
             "model_path": str(self.model_path),
             "scorer": "skeleton-correction",
+            "skeleton_execution_provider": (
+                self.inference_providers[0]
+                if self.inference_providers
+                else "PyTorch"
+            ),
+            "skeleton_tensorrt_active": float(
+                bool(self.inference_providers)
+                and self.inference_providers[0] == "TensorrtExecutionProvider"
+            ),
         }
+        if reference_index is not None:
+            diagnostics["expert_reference_index"] = reference_index
+            diagnostics["expert_reference_distance"] = reference_distance
+            if reference_index < len(self.expert_training_files):
+                expert_filename = self.expert_training_files[reference_index]
+                diagnostics["expert_reference_filename"] = expert_filename
+                diagnostics["expert_reference_id"] = Path(expert_filename).stem
         return (
             GradingOutcome(total_grade=total_grade, grading_details=details),
-            window,
+            corrected,
             diagnostics,
         )

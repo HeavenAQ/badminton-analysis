@@ -20,11 +20,14 @@ from badminton_analysis.ml.skeleton_dataset import (
 from badminton_analysis.ml.skeleton_normalization import phase_align_sequence
 from badminton_analysis.ml.skeleton_normalization import restore_phase_timing
 from badminton_analysis.ml.skeleton_scoring import (
+    JOINT_WEIGHTS,
     correction_quality_metrics,
     expert_euclidean_distances,
     project_bone_lengths,
+    select_bone_adapted_expert,
     sequence_training_losses,
 )
+from badminton_analysis.ml.skill_specs import get_skill_spec, supported_skill_choices
 
 
 def _split_files(
@@ -66,20 +69,22 @@ def _load_expert_bank(
 def _build_student_targets(
     student_files: list[Path],
     expert_files: list[Path],
+    joint_weights: np.ndarray = JOINT_WEIGHTS,
 ) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], list[dict[str, Any]]]:
     expert_skeletons, expert_confidence = _load_expert_bank(expert_files)
     targets: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     rows: list[dict[str, Any]] = []
     for path in student_files:
         source, source_confidence = _load_aligned(path)
-        distances = expert_euclidean_distances(
-            source, expert_skeletons, source_confidence, expert_confidence
+        nearest_index, target, target_confidence, selection_distance = (
+            select_bone_adapted_expert(
+                source,
+                expert_skeletons,
+                source_confidence,
+                expert_confidence,
+                joint_weights,
+            )
         )
-        nearest_index = int(np.argmin(distances))
-        reference = expert_skeletons[nearest_index]
-        reference_confidence = expert_confidence[nearest_index]
-        target = project_bone_lengths(source, reference)
-        target_confidence = np.minimum(source_confidence, reference_confidence)
         target_distance = expert_euclidean_distances(
             target,
             expert_skeletons[nearest_index : nearest_index + 1],
@@ -91,7 +96,7 @@ def _build_student_targets(
             {
                 "student_file": path.name,
                 "target_expert_file": expert_files[nearest_index].name,
-                "input_target_expert_distance": float(distances[nearest_index]),
+                "input_target_expert_distance": selection_distance,
                 "pseudo_target_expert_distance": float(target_distance),
             }
         )
@@ -129,6 +134,7 @@ def _run_epoch(
     loader: DataLoader,
     device: torch.device,
     optimizer: torch.optim.Optimizer | None,
+    joint_weights: np.ndarray | None = None,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(training)
@@ -145,7 +151,13 @@ def _run_epoch(
             optimizer.zero_grad(set_to_none=True)
         with torch.set_grad_enabled(training):
             prediction = model(features)
-            losses = sequence_training_losses(prediction, target, confidence)
+            losses = (
+                sequence_training_losses(prediction, target, confidence)
+                if joint_weights is None
+                else sequence_training_losses(
+                    prediction, target, confidence, joint_weights
+                )
+            )
             if optimizer is not None:
                 losses["loss"].backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -163,12 +175,21 @@ def _evaluate_expert_distance(
     expert_files: list[Path],
     device: torch.device,
     correction_strength: float,
+    reference_guidance: float,
     expert_range_threshold: float,
+    joint_weights: np.ndarray,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     correction_experts, correction_expert_confidence = _load_expert_bank(
         correction_expert_files
     )
-    expert_skeletons, expert_confidence = _load_expert_bank(expert_files)
+    unseen_experts, unseen_expert_confidence = _load_expert_bank(expert_files)
+    expert_skeletons = np.concatenate(
+        (correction_experts, unseen_experts), axis=0
+    )
+    expert_confidence = np.concatenate(
+        (correction_expert_confidence, unseen_expert_confidence), axis=0
+    )
+    all_expert_files = (*correction_expert_files, *expert_files)
     rows: list[dict[str, Any]] = []
     model.eval()
     for path in student_files:
@@ -180,17 +201,17 @@ def _evaluate_expert_distance(
         confidence = np.clip(
             phase_align_sequence(raw_confidence, phases), 0.0, 1.0
         )
-        correction_reference_distances = expert_euclidean_distances(
+        (
+            correction_reference_index,
+            correction_reference,
+            _,
+            _,
+        ) = select_bone_adapted_expert(
             source,
             correction_experts,
             confidence,
             correction_expert_confidence,
-        )
-        correction_reference_index = int(
-            np.argmin(correction_reference_distances)
-        )
-        correction_reference = project_bone_lengths(
-            source, correction_experts[correction_reference_index]
+            joint_weights,
         )
         features = np.concatenate(
             (source, correction_reference, confidence[..., None]), axis=-1
@@ -200,8 +221,12 @@ def _evaluate_expert_distance(
         )
         with torch.inference_mode():
             raw_prediction = model(tensor)[0].cpu().numpy()
+        guided_prediction = (
+            (1.0 - reference_guidance) * raw_prediction
+            + reference_guidance * correction_reference
+        )
         raw_prediction = source + correction_strength * (
-            raw_prediction - source
+            guided_prediction - source
         )
         corrected = project_bone_lengths(source, raw_prediction)
         input_distances = expert_euclidean_distances(
@@ -209,6 +234,12 @@ def _evaluate_expert_distance(
         )
         corrected_distances = expert_euclidean_distances(
             corrected, expert_skeletons, confidence, expert_confidence
+        )
+        corrected_unseen_distances = expert_euclidean_distances(
+            corrected,
+            unseen_experts,
+            confidence,
+            unseen_expert_confidence,
         )
         reference_target_distance = float(
             expert_euclidean_distances(
@@ -227,14 +258,29 @@ def _evaluate_expert_distance(
         raw_corrected = project_bone_lengths(
             raw_source, raw_source + raw_correction
         )
+        raw_reference_correction = restore_phase_timing(
+            correction_reference - source, phases
+        )
+        raw_reference = project_bone_lengths(
+            raw_source, raw_source + raw_reference_correction
+        )
         quality = correction_quality_metrics(
             raw_source, raw_corrected, raw_confidence
         )
+        reference_quality = correction_quality_metrics(
+            raw_source, raw_reference, raw_confidence
+        )
+        reference_acceleration = reference_quality[
+            "mean_correction_acceleration"
+        ]
         rows.append(
             {
                 "filename": path.name,
                 "input_nearest_expert_distance": input_nearest,
                 "corrected_nearest_expert_distance": corrected_nearest,
+                "corrected_nearest_unseen_expert_distance": float(
+                    np.min(corrected_unseen_distances)
+                ),
                 "corrected_reference_target_distance": reference_target_distance,
                 "nearest_distance_improvement": input_nearest - corrected_nearest,
                 "nearest_distance_ratio": corrected_nearest / max(input_nearest, 1e-8),
@@ -242,8 +288,10 @@ def _evaluate_expert_distance(
                 "corrected_mean_expert_distance": float(
                     np.mean(corrected_distances)
                 ),
-                "input_nearest_expert": expert_files[int(np.argmin(input_distances))].name,
-                "corrected_nearest_expert": expert_files[
+                "input_nearest_expert": all_expert_files[
+                    int(np.argmin(input_distances))
+                ].name,
+                "corrected_nearest_expert": all_expert_files[
                     int(np.argmin(corrected_distances))
                 ].name,
                 "correction_reference_expert": correction_expert_files[
@@ -251,6 +299,11 @@ def _evaluate_expert_distance(
                 ].name,
                 "within_expert_range": corrected_nearest
                 <= expert_range_threshold,
+                "reference_correction_acceleration": reference_acceleration,
+                "correction_acceleration_ratio": quality[
+                    "mean_correction_acceleration"
+                ]
+                / max(reference_acceleration, 1e-8),
                 **quality,
             }
         )
@@ -266,6 +319,13 @@ def _evaluate_expert_distance(
     corrected_mean_values = np.asarray(
         [row["corrected_mean_expert_distance"] for row in rows], dtype=np.float64
     )
+    corrected_unseen_values = np.asarray(
+        [
+            row["corrected_nearest_unseen_expert_distance"]
+            for row in rows
+        ],
+        dtype=np.float64,
+    )
     reference_target_values = np.asarray(
         [row["corrected_reference_target_distance"] for row in rows],
         dtype=np.float64,
@@ -275,6 +335,9 @@ def _evaluate_expert_distance(
         "input_nearest_expert_distance": float(np.mean(input_nearest_values)),
         "corrected_nearest_expert_distance": float(
             np.mean(corrected_nearest_values)
+        ),
+        "corrected_nearest_unseen_expert_distance": float(
+            np.mean(corrected_unseen_values)
         ),
         "nearest_distance_ratio": float(
             np.mean(corrected_nearest_values / np.maximum(input_nearest_values, 1e-8))
@@ -301,6 +364,14 @@ def _evaluate_expert_distance(
         "mean_correction_acceleration": float(
             np.mean([row["mean_correction_acceleration"] for row in rows])
         ),
+        "mean_reference_correction_acceleration": float(
+            np.mean(
+                [row["reference_correction_acceleration"] for row in rows]
+            )
+        ),
+        "mean_correction_acceleration_ratio": float(
+            np.mean([row["correction_acceleration_ratio"] for row in rows])
+        ),
         "p95_relative_bone_change": float(
             max(row["p95_relative_bone_change"] for row in rows)
         ),
@@ -319,26 +390,25 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train a phase-aligned, expert-guided clear skeleton corrector"
-    )
-    parser.add_argument("--dataset-root", default="datasets/skeleton_sequences/clear")
-    parser.add_argument(
-        "--model-path", default="models/skeleton_correction/clear_expert_guided_v3.pt"
+        description="Train a phase-aligned, expert-guided skeleton corrector"
     )
     parser.add_argument(
-        "--metrics-dir",
-        default="stats/skeleton_correction/clear_expert_guided_v3_training",
+        "--skill", choices=supported_skill_choices(), default="clear"
     )
+    parser.add_argument("--dataset-root")
+    parser.add_argument("--model-path")
+    parser.add_argument("--metrics-dir")
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--model-dim", type=int, default=128)
     parser.add_argument("--max-correction", type=float, default=3.5)
+    parser.add_argument("--reference-guidance", type=float, default=0.5)
     parser.add_argument("--minimum-improved-fraction", type=float, default=1.0)
     parser.add_argument("--minimum-within-expert-range", type=float, default=1.0)
     parser.add_argument("--maximum-reference-distance", type=float, default=0.1)
     parser.add_argument(
-        "--maximum-correction-acceleration", type=float, default=0.04
+        "--maximum-correction-acceleration-ratio", type=float, default=1.1
     )
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--device", default="auto")
@@ -347,6 +417,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not 0.0 <= args.reference_guidance <= 1.0:
+        raise ValueError("reference guidance must be between zero and one")
+    spec = get_skill_spec(args.skill)
+    dataset_root = Path(args.dataset_root) if args.dataset_root else spec.dataset_root
+    model_path = Path(args.model_path) if args.model_path else spec.model_path
+    metrics_dir = (
+        Path(args.metrics_dir)
+        if args.metrics_dir
+        else spec.training_metrics_dir
+    )
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -360,8 +440,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         else args.device
     )
 
-    expert_files = discover_sequence_files(args.dataset_root, "experts")
-    student_files = discover_sequence_files(args.dataset_root, "beginners")
+    expert_files = discover_sequence_files(dataset_root, "experts")
+    student_files = discover_sequence_files(dataset_root, "beginners")
+    for path in (*expert_files, *student_files):
+        sample_skill = str(load_sequence(path)["skill"].item())
+        if sample_skill != spec.slug:
+            raise ValueError(
+                f"dataset {path} contains skill {sample_skill}, expected {spec.slug}"
+            )
     expert_train, expert_validation, expert_test = _split_files(
         expert_files, args.seed
     )
@@ -369,7 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         student_files, args.seed + 1
     )
     student_targets, pairing_rows = _build_student_targets(
-        student_train, expert_train
+        student_train, expert_train, spec.joint_weights_array
     )
     validation_expert_variability = _expert_variability(expert_validation)
     validation_expert_threshold = validation_expert_variability[
@@ -417,8 +503,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         model.parameters(), lr=args.learning_rate, weight_decay=1e-4
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
-    model_path = Path(args.model_path)
-    metrics_dir = Path(args.metrics_dir)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(metrics_dir / "training_pairs.csv", pairing_rows)
@@ -427,10 +511,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     best_expert_distance = float("inf")
     accepted_epoch: int | None = None
     for epoch in range(1, args.epochs + 1):
-        training_metrics = _run_epoch(model, training_loader, device, optimizer)
+        training_metrics = _run_epoch(
+            model,
+            training_loader,
+            device,
+            optimizer,
+            spec.joint_weights_array,
+        )
         with torch.no_grad():
             validation_metrics = _run_epoch(
-                model, validation_loader, device, None
+                model,
+                validation_loader,
+                device,
+                None,
+                spec.joint_weights_array,
             )
         guidance, _ = _evaluate_expert_distance(
             model,
@@ -439,7 +533,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             expert_validation,
             device,
             1.0,
+            args.reference_guidance,
             validation_expert_threshold,
+            spec.joint_weights_array,
         )
         if not all(
             np.isfinite(value)
@@ -471,8 +567,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             and guidance["max_reference_target_distance"]
             <= args.maximum_reference_distance
             and guidance["max_joint_correction"] <= args.max_correction * 1.5
-            and guidance["mean_correction_acceleration"]
-            <= args.maximum_correction_acceleration
+            and guidance["mean_correction_acceleration_ratio"]
+            <= args.maximum_correction_acceleration_ratio
             and guidance["p95_relative_bone_change"] < 1e-3
         )
         if (
@@ -486,13 +582,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "model_state": model.state_dict(),
                     "model_config": model.config(),
-                    "skill": "clear",
+                    "skill": spec.slug,
+                    "joint_weights": list(spec.joint_weights),
+                    "criteria": [rule.as_prompt_dict() for rule in spec.rules],
                     "sequence_frames": 64,
                     "phase_aligned": True,
                     "expert_guided": True,
                     "reference_conditioned": True,
                     "target_definition": "full_bone_preserving_nearest_expert",
                     "inference_strength": 1.0,
+                    "reference_guidance": args.reference_guidance,
+                    "quality_gates": {
+                        "minimum_improved_fraction": args.minimum_improved_fraction,
+                        "minimum_within_expert_range": args.minimum_within_expert_range,
+                        "maximum_reference_distance": args.maximum_reference_distance,
+                        "maximum_correction_acceleration_ratio": (
+                            args.maximum_correction_acceleration_ratio
+                        ),
+                    },
                     "accepted_epoch": epoch,
                     "validation_expert_distance": guidance,
                     "validation_expert_variability": validation_expert_variability,
@@ -517,6 +624,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"expert_val={validation_metrics['loss']:.6f} "
             f"distance={guidance['corrected_nearest_expert_distance']:.6f} "
             f"ratio={guidance['nearest_distance_ratio']:.4f} "
+            f"acceleration_ratio={guidance['mean_correction_acceleration_ratio']:.4f} "
             f"improved={guidance['improved_fraction']:.2f} "
             f"within_expert_range={guidance['within_expert_range_fraction']:.2f} "
             f"accepted={accepted}"
@@ -536,7 +644,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         expert_validation,
         device,
         1.0,
+        args.reference_guidance,
         validation_expert_threshold,
+        spec.joint_weights_array,
     )
     test_summary, test_rows = _evaluate_expert_distance(
         model,
@@ -545,7 +655,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         expert_test,
         device,
         1.0,
+        args.reference_guidance,
         test_expert_threshold,
+        spec.joint_weights_array,
     )
     all_students_summary, _ = _evaluate_expert_distance(
         model,
@@ -554,7 +666,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         expert_test,
         device,
         1.0,
+        args.reference_guidance,
         test_expert_threshold,
+        spec.joint_weights_array,
     )
     _write_csv(metrics_dir / "expert_distance_validation.csv", validation_rows)
     _write_csv(metrics_dir / "expert_distance_test.csv", test_rows)
@@ -572,6 +686,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "mean_correction_acceleration": all_students_summary[
                 "mean_correction_acceleration"
             ],
+            "mean_reference_correction_acceleration": all_students_summary[
+                "mean_reference_correction_acceleration"
+            ],
+            "mean_correction_acceleration_ratio": all_students_summary[
+                "mean_correction_acceleration_ratio"
+            ],
             "p95_relative_bone_change": all_students_summary[
                 "p95_relative_bone_change"
             ],
@@ -583,8 +703,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (
         all_students_summary["max_joint_correction"]
         > args.max_correction * 1.5
-        or all_students_summary["mean_correction_acceleration"]
-        > args.maximum_correction_acceleration
+        or all_students_summary["mean_correction_acceleration_ratio"]
+        > args.maximum_correction_acceleration_ratio
         or all_students_summary["p95_relative_bone_change"] >= 1e-3
         or all_students_summary["max_reference_target_distance"]
         > args.maximum_reference_distance

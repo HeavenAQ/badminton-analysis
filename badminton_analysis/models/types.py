@@ -85,6 +85,7 @@ class TrackingData(TypedDict):
     hand_positions: list[Coordinate2D]
     elbow_positions: list[Coordinate2D]
     time_intervals: list[float]
+    source_frame_indices: NotRequired[list[int]]
     wholebody_landmarks: NotRequired[list[WholeBodyCoordinateDict]]
 
 
