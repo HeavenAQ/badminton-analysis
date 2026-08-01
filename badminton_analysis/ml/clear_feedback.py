@@ -13,148 +13,37 @@ import pandas as pd
 from numpy.typing import NDArray
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from badminton_analysis.ml.skill_specs import (
+    CANONICAL_JOINTS_ZH_TW,
+    SkillCorrectionSpec,
+    get_skill_spec,
+)
+from badminton_analysis.models.types import Skill
+
 CanonicalJointId = Literal[0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-FeedbackPhase = Literal[
-    "preparation", "rotation", "contact", "follow_through"
-]
-RuleReference = Literal[
-    "preparation",
-    "body_rotation",
-    "arm_balance",
-    "elbow_forward",
-    "wrist_flick",
-    "follow_through",
-]
-CriterionName = Literal[
-    "球拍舉至腰部預備",
-    "轉身",
-    "雙手手肘平衡",
-    "手肘往前轉至前方",
-    "手腕發力",
-    "慣用手肩膀往前轉",
-]
+FeedbackPhase = str
+RuleReference = str
+CriterionName = str
 
 DEFAULT_PHASE_INDICES = (0, 20, 39, 51, 63)
 
-CANONICAL_JOINTS = {
-    0: "頭部",
-    5: "非慣用側肩膀",
-    6: "慣用側肩膀",
-    7: "非慣用側手肘",
-    8: "慣用側手肘",
-    9: "非慣用側手腕",
-    10: "慣用側手腕",
-    11: "非慣用側髖部",
-    12: "慣用側髖部",
-    13: "非慣用側膝蓋",
-    14: "慣用側膝蓋",
-    15: "非慣用側腳踝",
-    16: "慣用側腳踝",
-}
+CANONICAL_JOINTS = CANONICAL_JOINTS_ZH_TW
 
-CLEAR_RULES = (
-    {
-        "id": "preparation",
-        "name_zh_tw": "球拍舉至腰部預備",
-        "phase": "preparation",
-        "maximum": 10,
-        "calculation_zh_tw": (
-            "第0關鍵幀：慣用側肩膀角度5分，加上非慣用側肩膀角度5分；"
-            "各自依專家平均值正負一個標準差評分。"
-        ),
-    },
-    {
-        "id": "body_rotation",
-        "name_zh_tw": "轉身",
-        "phase": "rotation",
-        "maximum": 10,
-        "calculation_zh_tw": (
-            "第0至第1關鍵幀：計算兩側髖部連線的三維旋轉角度；達到專家平均值即滿分，"
-            "低於平均值時依單尾高斯函數遞減。"
-        ),
-    },
-    {
-        "id": "arm_balance",
-        "name_zh_tw": "雙手手肘平衡",
-        "phase": "rotation",
-        "maximum": 20,
-        "calculation_zh_tw": (
-            "第1關鍵幀：慣用側肩膀角度10分，加上非慣用側肩膀角度10分；"
-            "各自依專家平均值正負一個標準差評分。"
-        ),
-    },
-    {
-        "id": "elbow_forward",
-        "name_zh_tw": "手肘往前轉至前方",
-        "phase": "contact",
-        "maximum": 20,
-        "calculation_zh_tw": (
-            "第2關鍵幀：慣用側肩膀角度8分、鼻子至慣用側肩膀與手肘的夾角8分、"
-            "慣用側手肘角度4分；三項皆依專家平均值正負一個標準差評分。"
-        ),
-    },
-    {
-        "id": "wrist_flick",
-        "name_zh_tw": "手腕發力",
-        "phase": "contact",
-        "maximum": 20,
-        "calculation_zh_tw": (
-            "第2關鍵幀：若手部關鍵點可用，計算慣用側手肘至手腕與中指掌指關節的夾角，"
-            "130度起得分、165度滿分；若不可用，改以慣用側手肘角度對照專家分布。"
-        ),
-    },
-    {
-        "id": "follow_through",
-        "name_zh_tw": "慣用手肩膀往前轉",
-        "phase": "follow_through",
-        "maximum": 20,
-        "calculation_zh_tw": (
-            "第3與第4關鍵幀取較佳者：慣用側肩膀角度10分，加上相對第0關鍵幀的"
-            "雙肩連線三維旋轉10分；旋轉依專家平均值作單尾評分。"
-        ),
-    },
+CLEAR_RULES = tuple(
+    rule.as_prompt_dict() for rule in get_skill_spec(Skill.CLEAR).rules
 )
 
 RULE_CONTRACTS: dict[str, dict[str, Any]] = {
-    "preparation": {
-        "title": "球拍舉至腰部預備",
-        "phase": "preparation",
-        "joint_ids": {5, 6, 7, 8, 9, 10},
-    },
-    "body_rotation": {
-        "title": "轉身",
-        "phase": "rotation",
-        "joint_ids": {11, 12},
-    },
-    "arm_balance": {
-        "title": "雙手手肘平衡",
-        "phase": "rotation",
-        "joint_ids": {5, 6, 7, 8},
-    },
-    "elbow_forward": {
-        "title": "手肘往前轉至前方",
-        "phase": "contact",
-        "joint_ids": {0, 6, 8, 10},
-    },
-    "wrist_flick": {
-        "title": "手腕發力",
-        "phase": "contact",
-        "joint_ids": {8, 10},
-    },
-    "follow_through": {
-        "title": "慣用手肩膀往前轉",
-        "phase": "follow_through",
-        "joint_ids": {5, 6},
-    },
+    rule.id: {
+        "title": rule.name_zh_tw,
+        "phase": rule.phase,
+        "joint_ids": set(rule.measured_joints),
+    }
+    for rule in get_skill_spec(Skill.CLEAR).rules
 }
 
 COACHING_TARGET_JOINTS: dict[str, tuple[int, ...]] = {
-    "preparation": (6, 8, 10),
-    "body_rotation": (11, 12),
-    "arm_balance": (7, 8),
-    "elbow_forward": (6, 8),
-    "wrist_flick": (8, 10),
-    "follow_through": (6,),
+    rule.id: rule.coaching_joints for rule in get_skill_spec(Skill.CLEAR).rules
 }
 
 
@@ -171,26 +60,18 @@ class FeedbackProblem(BaseModel):
     evidence: str = Field(min_length=10, max_length=240)
     frame_index: int = Field(ge=0, le=63)
     phase: FeedbackPhase
-    joint_ids: list[CanonicalJointId] = Field(min_length=1, max_length=3)
+    joint_ids: list[CanonicalJointId] = Field(min_length=1, max_length=4)
     rule_reference: RuleReference
     confidence: float = Field(ge=0.0, le=1.0)
 
     _feedback_in_chinese = field_validator("feedback")(_contains_chinese)
     _evidence_in_chinese = field_validator("evidence")(_contains_chinese)
 
-    @model_validator(mode="after")
-    def follows_clear_rule_contract(self) -> "FeedbackProblem":
-        contract = RULE_CONTRACTS[self.rule_reference]
-        if self.title != contract["title"]:
-            raise ValueError("criterion title does not match rule_reference")
-        if self.phase != contract["phase"]:
-            raise ValueError("criterion phase does not match rule_reference")
-        if not set(self.joint_ids).issubset(contract["joint_ids"]):
-            raise ValueError("joint IDs are not measured by the selected criterion")
-        return self
 
+class RawSkillFeedbackAnalysis(BaseModel):
+    """API response shape before repository-owned rule fields are normalized."""
 
-class ClearFeedbackAnalysis(BaseModel):
+    skill: str
     language: Literal["zh-TW"]
     overall_feedback: str = Field(min_length=10, max_length=320)
     problems: list[FeedbackProblem] = Field(min_length=1, max_length=3)
@@ -198,9 +79,39 @@ class ClearFeedbackAnalysis(BaseModel):
     _overall_in_chinese = field_validator("overall_feedback")(_contains_chinese)
 
 
+class SkillFeedbackAnalysis(BaseModel):
+    skill: str
+    language: Literal["zh-TW"]
+    overall_feedback: str = Field(min_length=10, max_length=320)
+    problems: list[FeedbackProblem] = Field(min_length=1, max_length=3)
+
+    _overall_in_chinese = field_validator("overall_feedback")(_contains_chinese)
+
+    @model_validator(mode="after")
+    def follows_skill_rule_contract(self) -> "SkillFeedbackAnalysis":
+        spec = get_skill_spec(self.skill)
+        for problem in self.problems:
+            try:
+                rule = spec.rule(problem.rule_reference)
+            except KeyError as exc:
+                raise ValueError(str(exc)) from exc
+            if problem.title != rule.name_zh_tw:
+                raise ValueError("criterion title does not match rule_reference")
+            if problem.phase != rule.phase:
+                raise ValueError("criterion phase does not match rule_reference")
+            if not set(problem.joint_ids).issubset(rule.measured_joints):
+                raise ValueError("joint IDs are not measured by the selected criterion")
+        return self
+
+
+class ClearFeedbackAnalysis(SkillFeedbackAnalysis):
+    skill: Literal["clear"] = "clear"
+
+
 @dataclass(frozen=True)
 class SampledFrame:
     frame_index: int
+    source_frame_index: int
     timestamp_seconds: float
     phase: FeedbackPhase
     checkpoint_role_zh_tw: str
@@ -210,6 +121,7 @@ class SampledFrame:
     def manifest(self) -> dict[str, str | int | float]:
         return {
             "frame_index": self.frame_index,
+            "source_frame_index": self.source_frame_index,
             "timestamp_seconds": self.timestamp_seconds,
             "phase": self.phase,
             "checkpoint_role_zh_tw": self.checkpoint_role_zh_tw,
@@ -231,6 +143,18 @@ def load_phase_indices(path: Path) -> tuple[int, ...]:
         return _validated_phase_indices(sample["phase_indices"])
 
 
+def load_source_frame_indices(path: Path) -> tuple[int, ...]:
+    with np.load(path, allow_pickle=False) as sample:
+        if "source_frame_indices" not in sample.files:
+            return tuple(range(64))
+        values = tuple(int(value) for value in sample["source_frame_indices"])
+    if len(values) != 64 or any(value < 0 for value in values):
+        raise ValueError("source_frame_indices must contain 64 non-negative values")
+    if any(first > second for first, second in zip(values, values[1:])):
+        raise ValueError("source_frame_indices must be ordered")
+    return values
+
+
 def feedback_frame_indices(phase_indices: Sequence[int]) -> tuple[int, ...]:
     start, rotation, contact, follow, end = _validated_phase_indices(phase_indices)
     candidates = (
@@ -250,29 +174,45 @@ def feedback_frame_indices(phase_indices: Sequence[int]) -> tuple[int, ...]:
 
 
 def phase_for_frame(
-    frame_index: int, phase_indices: Sequence[int] = DEFAULT_PHASE_INDICES
+    frame_index: int,
+    phase_indices: Sequence[int] = DEFAULT_PHASE_INDICES,
+    spec: SkillCorrectionSpec | None = None,
 ) -> FeedbackPhase:
-    _, rotation, contact, _, _ = _validated_phase_indices(phase_indices)
-    if frame_index < rotation:
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
+    _, anchor_1, anchor_2, anchor_3, _ = _validated_phase_indices(phase_indices)
+    if resolved_spec.skill == Skill.LIFT:
+        if frame_index < anchor_1:
+            return "preparation"
+        if frame_index < anchor_3:
+            return "backswing"
+        if frame_index <= anchor_3:
+            return "contact"
+        return "follow_through"
+    if resolved_spec.skill == Skill.SERVE:
+        if frame_index <= anchor_1:
+            return "preparation"
+        if frame_index < anchor_3:
+            return "weight_transfer"
+        if frame_index <= anchor_3:
+            return "contact"
+        return "follow_through"
+    if frame_index < anchor_1:
         return "preparation"
-    if frame_index < contact:
+    if frame_index < anchor_2:
         return "rotation"
-    if frame_index <= contact + 3:
+    if frame_index <= anchor_2:
         return "contact"
     return "follow_through"
 
 
 def checkpoint_role(
-    frame_index: int, phase_indices: Sequence[int]
+    frame_index: int,
+    phase_indices: Sequence[int],
+    spec: SkillCorrectionSpec | None = None,
 ) -> str:
-    start, rotation, contact, follow, end = _validated_phase_indices(phase_indices)
-    roles = {
-        start: "第0關鍵幀：準備動作與轉身起點",
-        rotation: "第1關鍵幀：轉身終點與雙手平衡",
-        contact: "第2關鍵幀：手肘前轉與手腕發力",
-        follow: "第3關鍵幀：隨揮候選畫面",
-        end: "第4關鍵幀：隨揮候選畫面與動作終點",
-    }
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
+    anchors = _validated_phase_indices(phase_indices)
+    roles = dict(zip(anchors, resolved_spec.checkpoint_roles_zh_tw, strict=True))
     return roles.get(frame_index, "關鍵幀之間的動作過渡畫面")
 
 
@@ -285,9 +225,19 @@ def load_advice_context(path: Path, filename: str) -> dict[str, Any]:
     raise ValueError(f"no advice context found for {filename} in {path}")
 
 
-def load_feedback_problems(path: Path) -> list[dict[str, Any]]:
+def load_feedback_problems(
+    path: Path, spec: SkillCorrectionSpec | None = None
+) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    problems = payload.get("analysis", {}).get("problems")
+    analysis_payload = payload.get("analysis", {})
+    if spec is not None:
+        validated_analysis = SkillFeedbackAnalysis.model_validate(analysis_payload)
+        if validated_analysis.skill != spec.slug:
+            raise ValueError(
+                f"feedback skill is {validated_analysis.skill}, but dataset skill is "
+                f"{spec.slug}"
+            )
+    problems = analysis_payload.get("problems")
     if not isinstance(problems, list) or not problems:
         raise ValueError(f"feedback file has no analysis problems: {path}")
     validated: list[dict[str, Any]] = []
@@ -317,8 +267,11 @@ def load_feedback_display_score(path: Path) -> float | None:
     return score
 
 
-def coaching_target_joint_ids(rule_reference: str) -> list[int]:
-    return list(COACHING_TARGET_JOINTS[rule_reference])
+def coaching_target_joint_ids(
+    rule_reference: str, spec: SkillCorrectionSpec | None = None
+) -> list[int]:
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
+    return list(resolved_spec.rule(rule_reference).coaching_joints)
 
 
 def handedness_note_zh_tw(handedness: str | None) -> str:
@@ -338,8 +291,11 @@ def handedness_note_zh_tw(handedness: str | None) -> str:
 
 
 def load_correction_grade_context(
-    grading_results_path: Path, filename: str
+    grading_results_path: Path,
+    filename: str,
+    spec: SkillCorrectionSpec | None = None,
 ) -> dict[str, Any]:
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
     grading = pd.read_csv(grading_results_path)
     rows = grading[grading["filename"] == filename]
     if "label" in grading.columns:
@@ -353,13 +309,13 @@ def load_correction_grade_context(
         )
     row = rows.iloc[0]
     criteria: list[dict[str, Any]] = []
-    for index, rule in enumerate(CLEAR_RULES, start=1):
+    for index, rule in enumerate(resolved_spec.rules, start=1):
         criteria.append(
             {
-                "name_zh_tw": rule["name_zh_tw"],
-                "rule_reference": rule["id"],
+                "name_zh_tw": rule.name_zh_tw,
+                "rule_reference": rule.id,
                 "score": float(row[f"detail_{index}_grade"]),
-                "maximum": float(str(rule["maximum"])),
+                "maximum": rule.maximum,
                 "correction_distance": float(
                     row[f"detail_{index}_distance"]
                 ),
@@ -400,11 +356,21 @@ def sample_video_frames(
     output_dir: Path,
     *,
     phase_indices: Sequence[int] = DEFAULT_PHASE_INDICES,
+    source_frame_indices: Sequence[int] | None = None,
+    spec: SkillCorrectionSpec | None = None,
     frame_indices: Sequence[int] | None = None,
     max_width: int = 640,
     jpeg_quality: int = 85,
 ) -> list[SampledFrame]:
     phases = _validated_phase_indices(phase_indices)
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
+    source_mapping = (
+        tuple(range(64))
+        if source_frame_indices is None
+        else tuple(int(value) for value in source_frame_indices)
+    )
+    if len(source_mapping) != 64:
+        raise ValueError("source_frame_indices must contain 64 values")
     selected_frames = (
         feedback_frame_indices(phases) if frame_indices is None else frame_indices
     )
@@ -423,14 +389,18 @@ def sample_video_frames(
             old_frame.unlink()
         samples: list[SampledFrame] = []
         for frame_index in selected_frames:
-            if not 0 <= frame_index < frame_count:
+            source_frame_index = source_mapping[int(frame_index)]
+            if not 0 <= source_frame_index < frame_count:
                 raise ValueError(
-                    f"requested frame {frame_index}, but video has {frame_count} frames"
+                    f"requested source frame {source_frame_index}, but video has "
+                    f"{frame_count} frames"
                 )
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            capture.set(cv2.CAP_PROP_POS_FRAMES, source_frame_index)
             success, frame = capture.read()
             if not success or frame is None:
-                raise ValueError(f"could not read frame {frame_index} from {video_path}")
+                raise ValueError(
+                    f"could not read source frame {source_frame_index} from {video_path}"
+                )
             height, width = frame.shape[:2]
             if width > max_width:
                 resized_height = max(1, round(height * max_width / width))
@@ -443,9 +413,12 @@ def sample_video_frames(
             samples.append(
                 SampledFrame(
                     frame_index=frame_index,
-                    timestamp_seconds=frame_index / fps,
-                    phase=phase_for_frame(frame_index, phases),
-                    checkpoint_role_zh_tw=checkpoint_role(frame_index, phases),
+                    source_frame_index=source_frame_index,
+                    timestamp_seconds=source_frame_index / fps,
+                    phase=phase_for_frame(frame_index, phases, resolved_spec),
+                    checkpoint_role_zh_tw=checkpoint_role(
+                        frame_index, phases, resolved_spec
+                    ),
                     image_path=image_path,
                     data_url=data_url,
                 )
@@ -461,14 +434,18 @@ def prompt_context(
     *,
     phase_indices: Sequence[int],
     correction_grade: dict[str, Any],
+    spec: SkillCorrectionSpec | None = None,
 ) -> dict[str, Any]:
-    start, rotation, contact, follow, end = _validated_phase_indices(phase_indices)
+    resolved_spec = spec or get_skill_spec(Skill.CLEAR)
+    anchors = _validated_phase_indices(phase_indices)
     keypoints = sorted(
         advice.get("keypoints", []),
         key=lambda item: float(item.get("score", 100.0)),
     )
     return {
         "required_output_language": "繁體中文（臺灣，zh-TW）",
+        "skill": resolved_spec.slug,
+        "skill_name_zh_tw": resolved_spec.name_zh_tw,
         "student": {
             "filename": advice.get("filename"),
             "handedness": advice.get("handedness"),
@@ -487,19 +464,17 @@ def prompt_context(
         "handedness_note_zh_tw": handedness_note_zh_tw(
             advice.get("handedness")
         ),
-        "clear_technical_criteria": CLEAR_RULES,
+        "technical_criteria": [
+            rule.as_prompt_dict() for rule in resolved_spec.rules
+        ],
         "correction_distance_grade": correction_grade,
         "criterion_allowed_frames": {
-            "球拍舉至腰部預備": [start],
-            "轉身": [rotation],
-            "雙手手肘平衡": [rotation],
-            "手肘往前轉至前方": [contact],
-            "手腕發力": [contact],
-            "慣用手肩膀往前轉": [follow, end],
+            rule.name_zh_tw: [anchors[index] for index in rule.allowed_anchor_indices]
+            for rule in resolved_spec.rules
         },
         "criterion_coaching_target_joint_ids": {
-            rule["name_zh_tw"]: list(COACHING_TARGET_JOINTS[str(rule["id"])])
-            for rule in CLEAR_RULES
+            rule.name_zh_tw: list(rule.coaching_joints)
+            for rule in resolved_spec.rules
         },
         "model_priority_corrections_supporting_only": advice.get(
             "priority_corrections", []
@@ -510,18 +485,23 @@ def prompt_context(
 
 
 def build_response_input(
-    context: dict[str, Any], samples: Sequence[SampledFrame]
+    context: dict[str, Any],
+    samples: Sequence[SampledFrame],
+    spec: SkillCorrectionSpec | None = None,
 ) -> list[dict[str, Any]]:
+    resolved_spec = spec or get_skill_spec(str(context.get("skill", "clear")))
+    criterion_count = len(resolved_spec.rules)
     content: list[dict[str, Any]] = [
         {
             "type": "input_text",
             "text": (
-                "請依照提供的六項高遠球技術標準分析這組依時間排序的動作畫面。"
-                "只能回報一至三項屬於這六項標準的問題，title必須逐字使用標準名稱。"
+                f"請依照提供的{criterion_count}項{resolved_spec.name_zh_tw}技術標準"
+                "分析這組依時間排序的動作畫面。"
+                f"skill欄位必須填寫{resolved_spec.slug}。只能回報一至三項屬於這些"
+                "標準的問題，title必須逐字使用標準名稱。"
                 "不得自行新增其他技術標準。請只使用available_frames中的frame_index，"
                 "而且每項標準只能選criterion_allowed_frames指定的原始評分關鍵幀。"
-                "請只圈選criterion_coaching_target_joint_ids指定的教練提示目標；慣用手"
-                "肩膀往前轉只能圈慣用側肩膀（關節6），不可圈非慣用側肩膀。所有"
+                "請只圈選criterion_coaching_target_joint_ids指定的教練提示目標。所有"
                 "overall_feedback、"
                 "feedback與evidence必須使用臺灣繁體中文，禁止英文句子與簡體中文。"
                 "顯示分數只能使用correction_distance_grade，不得另算總分。"
@@ -538,6 +518,7 @@ def build_response_input(
                     "type": "input_text",
                     "text": (
                         f"畫面{sample.frame_index}；階段={sample.phase}；"
+                        f"原始影片畫面={sample.source_frame_index}；"
                         f"影片時間={sample.timestamp_seconds:.3f}秒；"
                         f"用途={sample.checkpoint_role_zh_tw}"
                     ),
@@ -553,18 +534,20 @@ def build_response_input(
 
 
 def validate_analysis_frames(
-    analysis: ClearFeedbackAnalysis,
+    analysis: SkillFeedbackAnalysis,
     samples: Sequence[SampledFrame],
     phase_indices: Sequence[int],
+    spec: SkillCorrectionSpec | None = None,
 ) -> None:
-    start, rotation, contact, follow, end = _validated_phase_indices(phase_indices)
+    resolved_spec = spec or get_skill_spec(analysis.skill)
+    if analysis.skill != resolved_spec.slug:
+        raise ValueError(
+            f"feedback skill {analysis.skill} does not match {resolved_spec.slug}"
+        )
+    anchors = _validated_phase_indices(phase_indices)
     allowed_by_rule = {
-        "preparation": {start},
-        "body_rotation": {rotation},
-        "arm_balance": {rotation},
-        "elbow_forward": {contact},
-        "wrist_flick": {contact},
-        "follow_through": {follow, end},
+        rule.id: {anchors[index] for index in rule.allowed_anchor_indices}
+        for rule in resolved_spec.rules
     }
     available = {sample.frame_index: sample for sample in samples}
     for problem in analysis.problems:
@@ -585,8 +568,12 @@ def validate_analysis_frames(
             )
 
 
-SYSTEM_INSTRUCTIONS = """你是專業羽球教練，正在分析高遠球動作。
-你必須嚴格依照提供的六項高遠球技術標準，不得新增、改寫或混用其他技術標準。
+def system_instructions(spec: SkillCorrectionSpec) -> str:
+    return f"""你是專業羽球教練，正在分析{spec.description_zh_tw}。
+你必須嚴格依照提供的{len(spec.rules)}項{spec.name_zh_tw}技術標準，不得新增、改寫或混用其他技術標準。
 影像是主要證據；青色與綠色骨架差異及其分數只能作為輔助假設。只回報影像與資料都支持的問題。
 所有給使用者看的文字必須使用臺灣繁體中文（zh-TW），不得使用英文句子或簡體中文。
 每項建議必須簡短明確，能在兩秒的影片暫停畫面中閱讀。關節編號必須使用提供的慣用側正規化對照。"""
+
+
+SYSTEM_INSTRUCTIONS = system_instructions(get_skill_spec(Skill.CLEAR))

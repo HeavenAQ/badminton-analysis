@@ -27,6 +27,7 @@ from badminton_analysis.ml.skeleton_normalization import (
     resample_sequence,
 )
 from badminton_analysis.ml.skeleton_scoring import BONES
+from badminton_analysis.ml.skill_specs import get_skill_spec
 from badminton_analysis.models.types import Handedness
 from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.services.video_processor import VideoProcessor
@@ -90,6 +91,24 @@ def _interpolate_missing(
                     timeline, timeline[valid], values[valid]
                 )
     return result.astype(np.float32)
+
+
+def _nearest_tracked_frame_indices(
+    source_frame_indices: NDArray[np.integer],
+    tracked_source_frame_indices: NDArray[np.integer],
+) -> NDArray[np.int64]:
+    targets = np.asarray(source_frame_indices, dtype=np.int64)
+    tracked = np.asarray(tracked_source_frame_indices, dtype=np.int64)
+    if targets.ndim != 1 or tracked.ndim != 1 or not len(tracked):
+        raise ValueError("source frame mappings must be non-empty vectors")
+    if np.any(np.diff(targets) < 0) or np.any(np.diff(tracked) < 0):
+        raise ValueError("source frame mappings must be ordered")
+    upper = np.clip(np.searchsorted(tracked, targets), 0, len(tracked) - 1)
+    lower = np.maximum(upper - 1, 0)
+    use_lower = np.abs(tracked[lower] - targets) <= np.abs(
+        tracked[upper] - targets
+    )
+    return np.where(use_lower, lower, upper).astype(np.int64)
 
 
 def _canonicalize_left_handed(
@@ -337,20 +356,32 @@ def render_video(
     )
     tracking = processor.process_frames(handedness)
     start, _, end = (int(value) for value in sample["analysis_window"])
-    if end >= len(tracking["frames"]):
-        raise ValueError(
-            f"stored analysis window ends at {end}, but tracker returned "
-            f"{len(tracking['frames'])} frames"
+    target_frames = len(sample["skeleton_3d"])
+    if "source_frame_indices" in sample:
+        frame_indices = _nearest_tracked_frame_indices(
+            sample["source_frame_indices"],
+            np.asarray(tracking["source_frame_indices"], dtype=np.int64),
         )
+        selected_landmarks = [
+            tracking["body_landmarks_2d"][int(index)]
+            for index in frame_indices
+        ]
+    else:
+        if end >= len(tracking["frames"]):
+            raise ValueError(
+                f"stored analysis window ends at {end}, but tracker returned "
+                f"{len(tracking['frames'])} frames"
+            )
+        frame_indices = np.rint(
+            np.linspace(start, end, target_frames)
+        ).astype(np.int64)
+        selected_landmarks = tracking["body_landmarks_2d"][start : end + 1]
 
-    raw_2d, raw_confidence = landmark_dicts_to_array(
-        tracking["body_landmarks_2d"][start : end + 1], 2
-    )
+    raw_2d, raw_confidence = landmark_dicts_to_array(selected_landmarks, 2)
     raw_2d = _interpolate_missing(raw_2d, raw_confidence)
     if handedness == Handedness.LEFT:
         raw_2d, raw_confidence = _canonicalize_left_handed(raw_2d, raw_confidence)
 
-    target_frames = len(sample["skeleton_3d"])
     pixel_2d = resample_sequence(raw_2d, target_frames)
     pixel_confidence = np.clip(
         resample_sequence(raw_confidence, target_frames), 0.0, 1.0
@@ -361,6 +392,13 @@ def render_video(
     model, checkpoint = (
         corrector if corrector is not None else load_corrector(model_path, device)
     )
+    dataset_skill = str(sample["skill"].item())
+    checkpoint_skill = str(checkpoint.get("skill", "clear"))
+    if checkpoint_skill != dataset_skill:
+        raise ValueError(
+            f"checkpoint skill is {checkpoint_skill}, but dataset skill is "
+            f"{dataset_skill}"
+        )
     corrected_3d = predict_correction(
         model,
         original_3d,
@@ -368,6 +406,7 @@ def render_video(
         device,
         sample["phase_indices"] if checkpoint.get("phase_aligned", False) else None,
         float(checkpoint.get("inference_strength", 1.0)),
+        float(checkpoint.get("reference_guidance", 0.0)),
     )
     score: float | None = None
     rows = results
@@ -383,7 +422,6 @@ def render_video(
     if correction_score is not None:
         score = correction_score
 
-    frame_indices = np.rint(np.linspace(start, end, target_frames)).astype(np.int64)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     first_frame = tracking["frames"][int(frame_indices[0])]
     height, width = first_frame.shape[:2]
@@ -447,19 +485,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--video-path", required=True)
     parser.add_argument("--dataset-path", required=True)
-    parser.add_argument(
-        "--model-path",
-        default="models/skeleton_correction/clear_expert_guided_v3.pt",
-    )
+    parser.add_argument("--model-path")
     parser.add_argument(
         "--results-path",
         default=None,
         help="Optional grading CSV; omitted by default because scores are unvalidated",
     )
-    parser.add_argument(
-        "--output-path",
-        default="stats/skeleton_correction/clear_debug_videos/corrected_skeleton.mp4",
-    )
+    parser.add_argument("--output-path")
     parser.add_argument(
         "--feedback-path",
         help="Optional OpenAI feedback JSON with frame indices and joint IDs",
@@ -471,6 +503,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    dataset_path = Path(args.dataset_path)
+    sample = load_sequence(dataset_path)
+    spec = get_skill_spec(str(sample["skill"].item()))
+    model_path = Path(args.model_path) if args.model_path else spec.model_path
+    output_path = (
+        Path(args.output_path)
+        if args.output_path
+        else Path("stats/skeleton_correction")
+        / f"{spec.slug}_debug_videos"
+        / "corrected_skeleton.mp4"
+    )
     feedback_path = Path(args.feedback_path) if args.feedback_path else None
     device = torch.device(
         "cuda"
@@ -481,13 +524,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     frame_count = render_video(
         video_path=Path(args.video_path),
-        dataset_path=Path(args.dataset_path),
-        model_path=Path(args.model_path),
-        output_path=Path(args.output_path),
+        dataset_path=dataset_path,
+        model_path=model_path,
+        output_path=output_path,
         results_path=Path(args.results_path) if args.results_path else None,
         device=device,
         feedback=(
-            load_feedback_problems(feedback_path)
+            load_feedback_problems(feedback_path, spec)
             if feedback_path
             else None
         ),
@@ -496,7 +539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         pause_seconds=args.pause_seconds,
     )
-    print(f"Wrote {frame_count} frames to {args.output_path}")
+    print(f"Wrote {frame_count} frames to {output_path}")
     return 0
 
 

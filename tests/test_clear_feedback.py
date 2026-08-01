@@ -13,6 +13,7 @@ from badminton_analysis.ml.clear_feedback import (
     CLEAR_RULES,
     ClearFeedbackAnalysis,
     DEFAULT_PHASE_INDICES,
+    RawSkillFeedbackAnalysis,
     coaching_target_joint_ids,
     feedback_frame_indices,
     handedness_note_zh_tw,
@@ -22,15 +23,17 @@ from badminton_analysis.ml.clear_feedback import (
     phase_for_frame,
     sample_video_frames,
 )
+from badminton_analysis.ml.skill_specs import get_skill_spec
+from badminton_analysis.models.types import Skill
 
 
-def _write_test_video(path: Path) -> None:
+def _write_test_video(path: Path, frame_count: int = 64) -> None:
     writer = cv2.VideoWriter(
         str(path), cv2.VideoWriter.fourcc(*"mp4v"), 30.0, (48, 64)
     )
     assert writer.isOpened()
     try:
-        for frame_index in range(64):
+        for frame_index in range(frame_count):
             frame = np.full((64, 48, 3), frame_index, dtype=np.uint8)
             writer.write(frame)
     finally:
@@ -43,8 +46,18 @@ def test_phase_for_frame_uses_clear_feedback_windows() -> None:
     assert phase_for_frame(20) == "rotation"
     assert phase_for_frame(38) == "rotation"
     assert phase_for_frame(39) == "contact"
-    assert phase_for_frame(42) == "contact"
-    assert phase_for_frame(43) == "follow_through"
+    assert phase_for_frame(40) == "follow_through"
+
+
+@pytest.mark.parametrize("skill", (Skill.SERVE, Skill.LIFT))
+def test_short_final_phase_keeps_last_anchor_in_follow_through(
+    skill: Skill,
+) -> None:
+    phases = (0, 29, 59, 61, 63)
+    spec = get_skill_spec(skill)
+
+    assert phase_for_frame(61, phases, spec) == "contact"
+    assert phase_for_frame(63, phases, spec) == "follow_through"
 
 
 def test_sample_video_frames_includes_exact_grading_checkpoints(tmp_path: Path) -> None:
@@ -62,6 +75,23 @@ def test_sample_video_frames_includes_exact_grading_checkpoints(tmp_path: Path) 
     assert all(sample.image_path.exists() for sample in samples)
     assert samples[5].timestamp_seconds == pytest.approx(39 / 30)
     assert samples[5].data_url.startswith("data:image/jpeg;base64,")
+
+
+def test_sample_video_frames_uses_source_frame_provenance(tmp_path: Path) -> None:
+    video_path = tmp_path / "source.mp4"
+    _write_test_video(video_path, frame_count=128)
+    source_mapping = tuple(index * 2 for index in range(64))
+
+    samples = sample_video_frames(
+        video_path,
+        tmp_path / "source_frames",
+        source_frame_indices=source_mapping,
+    )
+
+    contact = next(sample for sample in samples if sample.frame_index == 39)
+    assert contact.source_frame_index == 78
+    assert contact.timestamp_seconds == pytest.approx(78 / 30)
+    assert contact.manifest()["source_frame_index"] == 78
 
 
 def test_clear_rule_names_match_coaching_contract() -> None:
@@ -94,6 +124,33 @@ def test_feedback_schema_rejects_unknown_frame_or_joint() -> None:
         ],
     }
 
+    with pytest.raises(ValidationError):
+        ClearFeedbackAnalysis.model_validate(payload)
+
+
+def test_raw_feedback_schema_defers_skill_rule_normalization() -> None:
+    payload = {
+        "skill": "clear",
+        "language": "zh-TW",
+        "overall_feedback": "擊球階段的慣用手動作仍需要調整。",
+        "problems": [
+            {
+                "priority": "高",
+                "title": "模型暫定標題",
+                "feedback": "擊球時請讓慣用側手肘更明確地往前轉動。",
+                "evidence": "擊球畫面中的慣用側手肘仍停留在肩膀旁邊。",
+                "frame_index": 31,
+                "phase": "rotation",
+                "joint_ids": [8],
+                "rule_reference": "elbow_forward",
+                "confidence": 0.9,
+            }
+        ],
+    }
+
+    parsed = RawSkillFeedbackAnalysis.model_validate(payload)
+
+    assert parsed.problems[0].rule_reference == "elbow_forward"
     with pytest.raises(ValidationError):
         ClearFeedbackAnalysis.model_validate(payload)
 

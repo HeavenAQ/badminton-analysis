@@ -59,20 +59,25 @@ def sequence_training_losses(
     prediction: Tensor,
     target: Tensor,
     confidence: Tensor,
+    joint_weights: NDArray[np.floating] | Tensor = JOINT_WEIGHTS,
 ) -> dict[str, Tensor]:
     """Differentiable position, velocity, angle, and bone-length losses."""
-    joint_weights = torch.as_tensor(
-        JOINT_WEIGHTS, dtype=prediction.dtype, device=prediction.device
+    joint_weight_tensor = torch.as_tensor(
+        joint_weights, dtype=prediction.dtype, device=prediction.device
     ).view(1, 1, -1)
+    if joint_weight_tensor.shape[-1] != prediction.shape[-2]:
+        raise ValueError("joint_weights must contain one value per keypoint")
     position_error = (prediction - target).norm(dim=-1)
-    position = _masked_weighted_mean(position_error, joint_weights, confidence)
+    position = _masked_weighted_mean(
+        position_error, joint_weight_tensor, confidence
+    )
 
     prediction_velocity = prediction[:, 1:] - prediction[:, :-1]
     target_velocity = target[:, 1:] - target[:, :-1]
     velocity_mask = confidence[:, 1:] * confidence[:, :-1]
     velocity_error = (prediction_velocity - target_velocity).norm(dim=-1)
     velocity = _masked_weighted_mean(
-        velocity_error, joint_weights, velocity_mask
+        velocity_error, joint_weight_tensor, velocity_mask
     )
 
     bones = torch.as_tensor(BONES, dtype=torch.long, device=prediction.device)
@@ -150,6 +155,7 @@ def correction_distance_components(
     original: NDArray[np.floating],
     corrected: NDArray[np.floating],
     confidence: NDArray[np.floating],
+    joint_weights: NDArray[np.floating] = JOINT_WEIGHTS,
 ) -> dict[str, float]:
     """Return normalized correction components for one skeleton sequence."""
     source = np.asarray(original, dtype=np.float64)
@@ -159,9 +165,12 @@ def correction_distance_components(
         raise ValueError("original and corrected must have matching shape (T, J, 3)")
     if mask.shape != source.shape[:2]:
         raise ValueError("confidence must have shape (T, J)")
+    weights = np.asarray(joint_weights, dtype=np.float64)
+    if weights.shape != (source.shape[1],):
+        raise ValueError("joint_weights must contain one value per keypoint")
 
     position_error = np.linalg.norm(source - target, axis=-1)
-    position = _numpy_masked_mean(position_error, mask, JOINT_WEIGHTS[None, :])
+    position = _numpy_masked_mean(position_error, mask, weights[None, :])
 
     source_velocity = np.diff(source, axis=0)
     target_velocity = np.diff(target, axis=0)
@@ -169,7 +178,7 @@ def correction_distance_components(
     velocity = _numpy_masked_mean(
         np.linalg.norm(source_velocity - target_velocity, axis=-1),
         velocity_mask,
-        JOINT_WEIGHTS[None, :],
+        weights[None, :],
     )
 
     bone_indices = np.asarray(BONES, dtype=np.int64)
@@ -204,8 +213,11 @@ def correction_distance(
     corrected: NDArray[np.floating],
     confidence: NDArray[np.floating],
     component_weights: Mapping[str, float] = DEFAULT_COMPONENT_WEIGHTS,
+    joint_weights: NDArray[np.floating] = JOINT_WEIGHTS,
 ) -> tuple[float, dict[str, float]]:
-    components = correction_distance_components(original, corrected, confidence)
+    components = correction_distance_components(
+        original, corrected, confidence, joint_weights
+    )
     total = (
         float(component_weights["position"]) * components["position_distance"]
         + float(component_weights["angle"]) * components["angle_distance"]
@@ -401,6 +413,40 @@ def project_bone_lengths(
         pelvis = (projected[:, 11] + projected[:, 12]) / 2.0
         projected += (pelvis_anchor - pelvis)[:, None, :]
     return projected.astype(np.float32)
+
+
+def select_bone_adapted_expert(
+    sequence: NDArray[np.floating],
+    expert_sequences: NDArray[np.floating],
+    confidence: NDArray[np.floating],
+    expert_confidence: NDArray[np.floating],
+    joint_weights: NDArray[np.floating] = JOINT_WEIGHTS,
+) -> tuple[int, NDArray[np.float32], NDArray[np.float64], float]:
+    """Select the adapted expert with the lowest grading distance."""
+    source = np.asarray(sequence, dtype=np.float64)
+    experts = np.asarray(expert_sequences, dtype=np.float64)
+    source_confidence = np.asarray(confidence, dtype=np.float64)
+    reference_confidence = np.asarray(expert_confidence, dtype=np.float64)
+    if experts.ndim != 4 or experts.shape[1:] != source.shape:
+        raise ValueError("expert sequences must have shape (N, T, J, 3)")
+    if reference_confidence.shape != experts.shape[:3]:
+        raise ValueError("expert confidence must have shape (N, T, J)")
+
+    matches: list[tuple[float, int, NDArray[np.float32], NDArray[np.float64]]] = []
+    for index, expert in enumerate(experts):
+        adapted = project_bone_lengths(source, expert)
+        match_confidence = source_confidence * reference_confidence[index]
+        distance, _ = correction_distance(
+            source,
+            adapted,
+            match_confidence,
+            joint_weights=joint_weights,
+        )
+        matches.append((distance, index, adapted, match_confidence))
+    distance, index, adapted, match_confidence = min(
+        matches, key=lambda match: match[0]
+    )
+    return index, adapted, match_confidence, float(distance)
 
 
 def expert_euclidean_distances(

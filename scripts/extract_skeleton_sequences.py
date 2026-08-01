@@ -19,6 +19,7 @@ from badminton_analysis.ml.skeleton_normalization import (
     resample_phase_indices,
     resample_sequence,
 )
+from badminton_analysis.ml.skill_specs import get_skill_spec, supported_skill_choices
 from badminton_analysis.models.types import COCOKeypoints, Handedness, Skill
 from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.services.video_analyzer import VideoAnalyzer
@@ -27,6 +28,13 @@ from badminton_analysis.services.video_processor import VideoProcessor
 VIDEO_EXTENSIONS = (".mp4", ".mov")
 DEFAULT_BEGINNER_DIR = "scoring_videos/高遠球/初學者高遠球"
 DEFAULT_EXPERT_DIR = "scoring_videos/高遠球/專家高遠球"
+
+DEFAULT_SOURCE_DIRS = {
+    "clear": (DEFAULT_BEGINNER_DIR, DEFAULT_EXPERT_DIR),
+    "serve": ("scoring_videos/發球/無經驗同學", "scoring_videos/發球/羽球隊同學"),
+    "lift": ("scoring_videos/挑球/初學者挑球", "scoring_videos/挑球/專家挑球"),
+    "smash": ("scoring_videos/殺球/初學者殺球", "scoring_videos/殺球/專家殺球"),
+}
 
 
 def _video_fps(path: Path) -> float:
@@ -67,11 +75,13 @@ def extract_video_sequence(
     pose_detector: PoseDetector,
     target_frames: int,
     handedness_overrides: Mapping[str, Handedness] | None = None,
+    skill: Skill = Skill.CLEAR,
 ) -> dict[str, Any]:
     fallback_handedness = _handedness(video_path, handedness_overrides)
     summary: dict[str, Any] = {
         "filename": video_path.name,
         "label": label,
+        "skill": str(skill),
         "handedness": "",
         "handedness_source": "",
         "left_hand_motion_score": 0.0,
@@ -139,7 +149,7 @@ def extract_video_sequence(
             raise ValueError("dominant wrist or elbow tracking is insufficient")
 
         start, peak, end = VideoAnalyzer.find_analysis_window(
-            skill=Skill.CLEAR,
+            skill=skill,
             hand_positions=list(hand_positions),
             elbow_positions=list(elbow_positions),
         )
@@ -175,6 +185,24 @@ def extract_video_sequence(
             resample_sequence(normalized_confidence, target_frames), 0.0, 1.0
         )
         phase_indices = resample_phase_indices((start, peak, end), target_frames)
+        if np.any(np.diff(phase_indices) <= 0):
+            raise ValueError(
+                f"phase anchors are not strictly increasing: "
+                f"{phase_indices.tolist()}"
+            )
+        tracked_source_indices = np.asarray(
+            tracking.get("source_frame_indices", list(range(tracked_frames))),
+            dtype=np.int64,
+        )
+        if tracked_source_indices.shape != (tracked_frames,):
+            raise ValueError("source frame mapping is not aligned with pose frames")
+        source_frame_indices = np.rint(
+            resample_sequence(
+                tracked_source_indices[start : end + 1].astype(np.float64),
+                target_frames,
+            )
+        ).astype(np.int64)
+        source_phase_indices = source_frame_indices[phase_indices]
 
         output_dir = output_root / label
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -183,11 +211,13 @@ def extract_video_sequence(
             skeleton_3d=resampled_3d,
             skeleton_2d=resampled_2d,
             confidence=resampled_confidence,
-            skill=np.asarray("clear"),
+            skill=np.asarray(str(skill)),
             handedness=np.asarray(str(handedness)),
             video_name=np.asarray(video_path.name),
             analysis_window=np.asarray((start, peak, end), dtype=np.int64),
             phase_indices=phase_indices,
+            source_frame_indices=source_frame_indices,
+            source_phase_indices=source_phase_indices,
             fps=np.asarray(_video_fps(video_path), dtype=np.float32),
         )
         summary.update(status="success", resampled_frames=target_frames)
@@ -198,17 +228,24 @@ def extract_video_sequence(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Extract normalized clear skeleton sequences")
-    parser.add_argument("--beginner-dir", default=DEFAULT_BEGINNER_DIR)
-    parser.add_argument("--expert-dir", default=DEFAULT_EXPERT_DIR)
-    parser.add_argument("--output-root", default="datasets/skeleton_sequences/clear")
+    parser = argparse.ArgumentParser(description="Extract normalized skeleton sequences")
     parser.add_argument(
-        "--summary-path", default="stats/skeleton_correction/clear_dataset_summary.csv"
+        "--skill", choices=supported_skill_choices(), default="clear"
     )
-    parser.add_argument("--frames", type=int, default=64)
+    parser.add_argument("--beginner-dir")
+    parser.add_argument("--expert-dir")
+    parser.add_argument("--output-root")
+    parser.add_argument("--summary-path")
+    parser.add_argument(
+        "--frames",
+        type=int,
+        choices=(64,),
+        default=64,
+        help="Model sequence length; current checkpoints require exactly 64",
+    )
     parser.add_argument(
         "--handedness-overrides",
-        default="datasets/skeleton_sequences/clear/handedness_overrides.json",
+        default=None,
     )
     parser.add_argument(
         "--videos",
@@ -227,18 +264,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    output_root = Path(args.output_root)
+    spec = get_skill_spec(args.skill)
+    output_root = Path(args.output_root) if args.output_root else spec.dataset_root
     output_root.mkdir(parents=True, exist_ok=True)
     detector = PoseDetector()
-    handedness_overrides = _load_handedness_overrides(
-        Path(args.handedness_overrides) if args.handedness_overrides else None
+    overrides_path = (
+        Path(args.handedness_overrides)
+        if args.handedness_overrides
+        else output_root / "handedness_overrides.json"
     )
+    handedness_overrides = _load_handedness_overrides(overrides_path)
     rows: list[dict[str, Any]] = []
+    default_beginner_dir, default_expert_dir = DEFAULT_SOURCE_DIRS[spec.slug]
     groups = (
-        ("beginners", Path(args.beginner_dir)),
-        ("experts", Path(args.expert_dir)),
+        ("beginners", Path(args.beginner_dir or default_beginner_dir)),
+        ("experts", Path(args.expert_dir or default_expert_dir)),
     )
-    summary_path = Path(args.summary_path)
+    summary_path = (
+        Path(args.summary_path)
+        if args.summary_path
+        else Path("stats/skeleton_correction")
+        / f"{spec.slug}_dataset_summary.csv"
+    )
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     for label, directory in groups:
         if label not in args.groups:
@@ -260,6 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     detector,
                     args.frames,
                     handedness_overrides,
+                    spec.skill,
                 )
             )
             pd.DataFrame(rows).to_csv(summary_path, index=False)

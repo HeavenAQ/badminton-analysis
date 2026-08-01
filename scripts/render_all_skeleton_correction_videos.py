@@ -10,8 +10,16 @@ import torch
 
 from badminton_analysis.ml.infer_skeleton_corrector import load_corrector
 from badminton_analysis.ml.skeleton_dataset import load_sequence
+from badminton_analysis.ml.skill_specs import get_skill_spec, supported_skill_choices
 from badminton_analysis.services.pose_detector import PoseDetector
 from render_skeleton_correction_video import render_video
+
+DEFAULT_SOURCE_DIRS = {
+    "clear": ("scoring_videos/高遠球/初學者高遠球", "scoring_videos/高遠球/專家高遠球"),
+    "serve": ("scoring_videos/發球/無經驗同學", "scoring_videos/發球/羽球隊同學"),
+    "lift": ("scoring_videos/挑球/初學者挑球", "scoring_videos/挑球/專家挑球"),
+    "smash": ("scoring_videos/殺球/初學者殺球", "scoring_videos/殺球/專家殺球"),
+}
 
 
 def _transcode_h264(source: Path, destination: Path) -> None:
@@ -45,29 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Render scored skeleton-correction videos for a full dataset"
     )
     parser.add_argument(
-        "--dataset-root", default="datasets/skeleton_sequences/clear"
+        "--skill", choices=supported_skill_choices(), default="clear"
     )
-    parser.add_argument(
-        "--student-video-dir", default="scoring_videos/高遠球/初學者高遠球"
-    )
-    parser.add_argument(
-        "--expert-video-dir", default="scoring_videos/高遠球/專家高遠球"
-    )
-    parser.add_argument(
-        "--model-path",
-        default="models/skeleton_correction/clear_expert_guided_v3.pt",
-    )
-    parser.add_argument(
-        "--results-path",
-        default=(
-            "stats/skeleton_correction/clear_expert_guided_v3_grades/"
-            "grading_results.csv"
-        ),
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="stats/skeleton_correction/clear_expert_guided_v3_videos",
-    )
+    parser.add_argument("--dataset-root")
+    parser.add_argument("--student-video-dir")
+    parser.add_argument("--expert-video-dir")
+    parser.add_argument("--model-path")
+    parser.add_argument("--results-path")
+    parser.add_argument("--output-dir")
     parser.add_argument(
         "--groups",
         nargs="+",
@@ -82,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    spec = get_skill_spec(args.skill)
     device = torch.device(
         "cuda"
         if args.device == "auto" and torch.cuda.is_available()
@@ -89,10 +83,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.device == "auto"
         else args.device
     )
-    dataset_root = Path(args.dataset_root)
-    output_root = Path(args.output_dir)
+    dataset_root = Path(args.dataset_root) if args.dataset_root else spec.dataset_root
+    model_path = Path(args.model_path) if args.model_path else spec.model_path
+    output_root = (
+        Path(args.output_dir)
+        if args.output_dir
+        else Path("stats/skeleton_correction") / f"{spec.model_stem}_videos"
+    )
     output_root.mkdir(parents=True, exist_ok=True)
-    results_path = Path(args.results_path)
+    results_path = (
+        Path(args.results_path)
+        if args.results_path
+        else spec.grading_output_dir / "grading_results.csv"
+    )
     results = pd.read_csv(results_path)
     required_columns = {"filename", "label", "total_grade"}
     missing_columns = required_columns - set(results.columns)
@@ -101,15 +104,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"grading CSV is missing columns: {sorted(missing_columns)}"
         )
 
-    corrector = load_corrector(args.model_path, device)
+    corrector = load_corrector(model_path, device)
     pose_detector = PoseDetector()
+    default_student_dir, default_expert_dir = DEFAULT_SOURCE_DIRS[spec.slug]
     groups = (
         (
             "beginners",
             "students",
-            Path(args.student_video_dir),
+            Path(args.student_video_dir or default_student_dir),
         ),
-        ("experts", "experts", Path(args.expert_video_dir)),
+        ("experts", "experts", Path(args.expert_video_dir or default_expert_dir)),
     )
     summary_path = output_root / "render_summary.csv"
     summary_rows: list[dict[str, Any]] = []
@@ -160,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     frames = render_video(
                         video_path=source_path,
                         dataset_path=dataset_path,
-                        model_path=Path(args.model_path),
+                        model_path=model_path,
                         output_path=raw_path,
                         results_path=results_path,
                         device=device,

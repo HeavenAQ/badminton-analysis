@@ -1,236 +1,214 @@
 # Badminton Skeleton Correction
 
-This repository contains the current clear-only badminton analysis pipeline. It
-extracts 2D and 3D skeletons from video, predicts an expert-like corrected
-skeleton, scores the required correction, and produces Traditional Chinese
-coaching videos with timestamped joint annotations.
+This repository implements expert-guided skeleton correction for four badminton
+skills:
 
-The old rule graders, prototype scorers, statistical scripts, and annotation
-utilities are not part of this version.
+- `serve` - serve;
+- `lift` - lift;
+- `clear` - overhead clear; and
+- `smash` - overhead smash.
 
-## What The Pipeline Produces
+Every skill has a separate dataset, expert reference bank, checkpoint,
+calibration, joint weighting, qualitative criteria, and output directory. The
+skills share pose extraction, normalization, Transformer correction, score
+calibration, and rendering code, but training examples and scores are never
+pooled across skills.
 
-For each clear video, the pipeline can produce:
-
-- a normalized 64-frame 3D skeleton sequence;
-- an expert-guided corrected skeleton;
-- original-to-corrected position, angle, velocity, and bone-length distances;
-- a calibrated total score and six criterion allocations;
-- per-joint and per-phase evidence for language-model coaching;
-- an overlay video with detected and corrected skeletons; and
-- Traditional Chinese feedback with automatic pauses and joint circles.
-
-The committed model is:
+Only the accepted clear checkpoint and calibration are currently committed:
 
 ```text
 models/skeleton_correction/clear_expert_guided_v3.pt
 models/skeleton_correction/clear_expert_guided_v3.calibration.json
 ```
 
+Serve, lift, and smash are implemented end to end, but their models and grades
+must be generated from their own expert and student video datasets.
+
+## Outputs
+
+For one selected skill, the pipeline produces:
+
+- a dominant-side-normalized 64-frame 2D/3D skeleton sequence;
+- original-video frame provenance for every normalized frame;
+- the nearest phase-aligned training expert and bone-length-adapted reference;
+- an expert-like corrected skeleton;
+- position, angle, velocity, and bone-length correction distances;
+- a cohort-calibrated diagnostic score and criterion allocations;
+- per-joint and per-phase evidence;
+- detected/corrected skeleton videos; and
+- optional Traditional Chinese LLM feedback with pauses and joint circles.
+
+## Skill Criteria
+
+The qualitative contracts come from the previous skill implementations. They
+constrain score allocation and LLM advice; the numeric score itself comes from
+the current correction-distance algorithm.
+
+### Serve
+
+| Criterion | Maximum |
+|---|---:|
+| 雙手平舉 | 10 |
+| 將重心放至持拍腳 | 10 |
+| 重心轉移至非持拍腳 | 20 |
+| 髖關節前旋 | 20 |
+| 持拍手手腕發力 | 20 |
+| 肩膀旋轉朝前 | 20 |
+
+### Lift
+
+| Criterion | Maximum |
+|---|---:|
+| 手腕放置腰部放鬆預備 | 10 |
+| 手腕往後引拍 | 25 |
+| 手腕往前壓 | 35 |
+| 手腕放鬆回到預備姿勢 | 30 |
+
+### Clear And Smash
+
+Both retain the six original qualitative checkpoints, but use independent
+expert data, checkpoints, calibrations, joint weights, and prompt descriptions.
+
+| Criterion | Maximum |
+|---|---:|
+| 球拍舉至腰部預備 | 10 |
+| 轉身 | 10 |
+| 雙手手肘平衡 | 20 |
+| 手肘往前轉至前方 | 20 |
+| 手腕發力 | 20 |
+| 慣用手肩膀往前轉 | 20 |
+
 ## Architecture
 
 ```text
-video
-  -> RTMW whole-body 2D pose
-  -> MMPose 3D lifting
+one skill's source videos
+  -> direct RTMW3D whole-body 2D/3D pose
   -> handedness from normalized wrist acceleration
-  -> clear analysis window and five phase anchors
-  -> dominant-side normalization and 64-frame resampling
-  -> nearest phase-aligned training expert by masked 3D Euclidean distance
-  -> expert reference adapted to the student's bone lengths
-  -> reference-conditioned Transformer correction
-  -> geometry and expert-distance validation
-  -> correction-distance score and keypoint evidence
+  -> skill-specific analysis window
+  -> dominant-side/body-frame normalization
+  -> 64-frame resampling plus source-frame provenance
+  -> five-anchor phase alignment
+  -> adapt every training expert to the student's bone lengths
+  -> nearest expert by skill-weighted grading distance
+  -> reference-conditioned temporal/spatial Transformer
+  -> learned output blended 50% toward the adapted expert reference
+  -> bone-length projection and checkpoint quality gates
+  -> skill-weighted correction distance
+  -> skill-specific score calibration and criterion evidence
   -> optional OpenAI coaching and annotated video
 ```
 
-The full code-level trace is in
-[`docs/skeleton-correction-pipeline.md`](docs/skeleton-correction-pipeline.md).
-
-## Scoring
-
-The score measures how much the original skeleton must move to reach the
-model-predicted expert-like skeleton:
-
-```text
-D = position + 0.5 * angle + 0.5 * velocity + 0.25 * bone_length
-
-score(D) = 100 * exp(-alpha * max(D - offset, 0))
-```
-
-The committed clear calibration uses:
-
-```text
-offset = 0.24125837235747438
-alpha  = 2.680872933195534
-```
-
-On the current 50-student and 50-expert dataset, the calibrated means are 45.00
-for students and 99.90 for experts. These are group-fitted diagnostic scores,
-not independently validated human grades. Production grading requires
-per-video human labels and held-out calibration validation.
+The detailed prerequisites, equations, call graph, and tracing order are in
+[docs/skeleton-correction-pipeline.md](docs/skeleton-correction-pipeline.md).
 
 ## Requirements
 
 - Python 3.12
-- PyTorch
-- OpenCV
-- pandas, NumPy, Pillow, Pydantic, and the OpenAI Python SDK
-- a compatible OpenMMLab pose stack: `mmengine`, `mmcv`, `mmdet`, and `mmpose`
+- PyTorch, NumPy, pandas, OpenCV, Pillow, Pydantic, and the OpenAI SDK
+- a compatible OpenMMLab stack: `mmengine`, `mmcv`, `mmdet`, and `mmpose`
 - FFmpeg for H.264 review videos
 
-Install the Python project dependencies:
+Install project dependencies:
 
 ```bash
 uv sync --dev
 ```
 
-Install the OpenMMLab packages separately for the target PyTorch/CUDA
-environment. They are imported lazily, so unit tests and score-processing tools
-can run without loading pose models.
+The OpenMMLab packages are loaded lazily and must be installed separately for
+the target PyTorch/CUDA environment.
 
-For OpenAI coaching, place `OPENAI_API_KEY` in `.env`.
+## Run One Skill Separately
 
-## Data Layout
+The following example uses lift. Replace `lift` and the source directories to
+run serve or smash.
 
-Source videos and generated artifacts are intentionally ignored by Git.
-Extraction creates:
-
-```text
-datasets/skeleton_sequences/clear/
-  beginners/*.npz
-  experts/*.npz
-  handedness_overrides.json
-```
-
-Each NPZ contains `skeleton_3d`, `skeleton_2d`, `confidence`, handedness,
-analysis-window indices, five phase indices, video name, and FPS.
-
-## Extract Skeleton Sequences
+### 1. Extract
 
 ```bash
 .venv/bin/python scripts/extract_skeleton_sequences.py \
-  --beginner-dir /path/to/student/clear/videos \
-  --expert-dir /path/to/expert/clear/videos \
-  --output-root datasets/skeleton_sequences/clear
+  --skill lift \
+  --beginner-dir /path/to/lift/students \
+  --expert-dir /path/to/lift/experts
 ```
 
-Handedness is inferred from full-clip left/right wrist motion. Ambiguous clips
-can be specified in `handedness_overrides.json`.
+The default output is `datasets/skeleton_sequences/lift/`.
 
-## Train
+### 2. Train
 
 ```bash
 .venv/bin/python -m badminton_analysis.ml.train_skeleton_corrector \
-  --dataset-root datasets/skeleton_sequences/clear \
-  --model-path models/skeleton_correction/clear_expert_guided_v3.pt \
-  --epochs 150
+  --skill lift
 ```
 
-Training uses independent expert and student train/validation/test splits. A
-checkpoint is accepted only when validation corrections improve toward experts,
-enter the expert distance range, preserve bone lengths, remain temporally
-stable, and stay close to their selected expert references.
+The model is accepted only when the student corrections improve toward held-out
+experts, enter the expert range, preserve bone lengths, and satisfy correction
+magnitude and temporal-smoothness gates.
 
-## Evaluate And Generate Scores
+### 3. Infer And Calibrate
 
 ```bash
 .venv/bin/python -m badminton_analysis.ml.infer_skeleton_corrector \
-  --dataset-root datasets/skeleton_sequences/clear \
-  --model-path models/skeleton_correction/clear_expert_guided_v3.pt \
-  --output-dir stats/skeleton_correction/clear_expert_guided_v3_grades
-
-.venv/bin/python scripts/export_clear_correction_scores.py
+  --skill lift
 ```
 
-Important outputs include:
+This writes grades, calibration, distance components, keypoint evidence, and
+LLM advice context under
+`stats/skeleton_correction/lift_expert_guided_v1_grades/`.
 
-```text
-grading_results.csv
-distance_components.csv
-score_summary.csv
-calibration.json
-keypoint_scores.csv
-advice_context.jsonl
-```
+The displayed score is diagnostic, not an independently validated human grade.
+Its per-skill calibration is fitted on the complete evaluated expert and
+beginner cohorts, targeting means of `99.8` and `45.0`. Corrected-skeleton
+validity is evaluated separately: held-out students must move closer to the
+union of permitted training experts and unseen experts, and the report also
+retains distance to unseen experts alone.
 
-## Score A Directory Of Clear Videos
+### 4. Export Scores
 
 ```bash
-.venv/bin/python -m badminton_analysis.tools.grade_students \
-  --input-dir /path/to/clear/videos \
-  --output-dir stats/clear_scores \
-  --handedness auto
+.venv/bin/python scripts/export_correction_scores.py --skill lift
 ```
 
-Use `--handedness right` or `--handedness left` when automatic wrist-motion
-evidence is ambiguous.
-
-## Render Skeleton Corrections
-
-Render all students and experts:
+### 5. Render All Videos
 
 ```bash
 .venv/bin/python scripts/render_all_skeleton_correction_videos.py \
-  --dataset-root datasets/skeleton_sequences/clear \
-  --model-path models/skeleton_correction/clear_expert_guided_v3.pt \
-  --output-dir stats/skeleton_correction/clear_expert_guided_v3_videos
+  --skill lift \
+  --student-video-dir /path/to/lift/students \
+  --expert-video-dir /path/to/lift/experts
 ```
 
-Render one source video:
+### 6. Generate Traditional Chinese Feedback
+
+For the normalized 64-frame correction video:
+
+```bash
+.venv/bin/python scripts/analyze_skill_with_openai.py \
+  --skill lift \
+  --video-path /path/to/rendered/student.mp4 \
+  --video-frame-space normalized \
+  --dataset-path datasets/skeleton_sequences/lift/beginners/student.npz
+```
+
+Use `--video-frame-space source` when `--video-path` points to the original
+video. The extractor's stored frame mapping then selects the correct original
+frames.
+
+Render the returned pauses and joint circles:
 
 ```bash
 .venv/bin/python scripts/render_skeleton_correction_video.py \
-  --video-path /path/to/EG3.mp4 \
-  --dataset-path datasets/skeleton_sequences/clear/beginners/EG3.npz \
-  --output-path stats/EG3_corrected.mp4
+  --video-path /path/to/original/student.mp4 \
+  --dataset-path datasets/skeleton_sequences/lift/beginners/student.npz \
+  --feedback-path stats/openai_lift_feedback/student/feedback.json
 ```
 
-The detected skeleton is cyan and the corrected skeleton is green.
-
-## Generate LLM Coaching
-
-First generate structured Traditional Chinese feedback:
+## Testing
 
 ```bash
-.venv/bin/python scripts/analyze_clear_with_openai.py \
-  --video-path stats/skeleton_correction/clear_expert_guided_v3_videos/students/EG3.mp4 \
-  --dataset-path datasets/skeleton_sequences/clear/beginners/EG3.npz \
-  --advice-path stats/skeleton_correction/clear_expert_guided_v3_grades/advice_context.jsonl \
-  --grading-results-path stats/skeleton_correction/clear_expert_guided_v3_grades/grading_results.csv \
-  --output-dir stats/openai_clear_feedback/EG3
+.venv/bin/pytest -q
 ```
 
-Then render the annotations:
-
-```bash
-.venv/bin/python scripts/render_skeleton_correction_video.py \
-  --video-path /path/to/EG3.mp4 \
-  --dataset-path datasets/skeleton_sequences/clear/beginners/EG3.npz \
-  --feedback-path stats/openai_clear_feedback/EG3/feedback.json \
-  --output-path stats/openai_clear_feedback/EG3/annotated_feedback.mp4
-```
-
-The renderer pauses at each reported checkpoint, circles deterministic coaching
-joints, maps dominant joints back to the physical left or right side, and shows
-the correction-distance score beside the student name.
-
-## Tests
-
-```bash
-.venv/bin/python -m pytest -q
-.venv/bin/python -m mypy \
-  badminton_analysis scripts tests \
-  --config-file mypy.ini
-```
-
-The focused tests cover handedness, normalization, phase alignment, nearest
-expert selection, bone projection, score monotonicity, calibration, coaching
-schema validation, physical-side joint mapping, pose conversion, and CLI output.
-
-## Current Scope
-
-Only overhead clear is supported by the correction model and CLI. Adding another
-skill requires a separate phase contract, expert reference bank, joint/phase
-weights, checkpoint, calibration, and coaching criteria. Do not reuse the clear
-calibration for another skill.
+The tests cover all four skill contracts, handedness, normalization, phase
+alignment, expert pairing, correction geometry, score calibration, feedback
+schema validation, source-frame provenance, backend output, and rendering
+helpers.
