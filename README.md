@@ -88,6 +88,7 @@ one skill's source videos
   -> dominant-side/body-frame normalization
   -> 64-frame resampling plus source-frame provenance
   -> five-anchor phase alignment
+  -> filter the checkpoint expert bank to the student's handedness
   -> adapt every training expert to the student's bone lengths
   -> nearest expert by skill-weighted grading distance
   -> reference-conditioned temporal/spatial Transformer
@@ -97,6 +98,10 @@ one skill's source videos
   -> skill-specific score calibration and criterion evidence
   -> optional OpenAI coaching and annotated video
 ```
+
+Expert selection has no cross-handed fallback. If the checkpoint has no expert
+for the student's handedness, scoring stops with a data-availability error
+instead of comparing the student with an opposite-handed motion.
 
 The detailed prerequisites, equations, call graph, and tracing order are in
 [docs/skeleton-correction-pipeline.md](docs/skeleton-correction-pipeline.md).

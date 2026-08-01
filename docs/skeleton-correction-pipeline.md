@@ -356,22 +356,28 @@ For source sequence `S`, expert sequence `E_n`, source confidence `C`, and
 expert confidence `C_n`, each reference is first adapted to the student:
 
 ```text
+H = {n | expert_handedness_n = student_handedness}
 M_n(t,j) = C(t,j) * C_n(t,j)
 A_n = project_bone_lengths(S, E_n)
 
 d_n = correction_distance(S, A_n, M_n, skill_joint_weights)
 
-nearest = argmin_n d_n
+nearest = argmin_(n in H) d_n
 ```
 
 The distance is the same weighted position, angle, velocity, and bone metric
 used for grading after phase alignment. It is not cosine similarity or a
 separate embedding score. `project_bone_lengths()` keeps the student's pelvis
 anchor, and the selected complete adapted expert motion is the pseudo-target.
+An empty `H` is an explicit error; the scorer never falls back to an
+opposite-handed expert.
 
 Expert training samples reconstruct their own expert movement. Student samples
 learn the full movement toward their adapted nearest expert. Only experts from
 that skill's training split can enter the checkpoint reference bank.
+Handedness metadata is stored beside those reference tensors in the checkpoint
+so the filter is applied before distance calculation in both PyTorch and ONNX
+inference.
 
 ## 9. Model Input And Architecture
 
