@@ -29,8 +29,10 @@ Each skill is trained and calibrated independently.
 
 ## Expert Data Contract
 
-The legacy expert corpus contains 50 right-handed experts per skill. It has no
-left-handed experts. NSTC contributes experts only from these exact directories:
+The legacy expert corpus contains 50 right-handed experts for clear, lift, and
+smash. It has no left-handed experts. Serve intentionally excludes the legacy
+`scoring_videos/發球/羽球隊同學` directory. NSTC contributes experts only from
+these exact directories:
 
 ```text
 training_videos/nstc/{clear,serve,lift,smash}/left
@@ -45,7 +47,7 @@ are:
 | Skill | Right | Left | Total |
 |---|---:|---:|---:|
 | Clear | 80 | 20 | 100 |
-| Serve | 66 | 10 | 76 |
+| Serve | 16 | 10 | 26 |
 | Lift | 72 | 10 | 82 |
 | Smash | 66 | 9 | 75 |
 
@@ -58,6 +60,7 @@ For one selected skill, the pipeline produces:
 - the nearest phase-aligned training expert and bone-length-adapted reference;
 - an expert-like corrected skeleton;
 - position, angle, velocity, and bone-length correction distances;
+- for serve, separate full-sequence lower-support and torso-forward-lean distances;
 - a cohort-calibrated diagnostic score and criterion allocations;
 - per-joint and per-phase evidence;
 - detected/corrected skeleton videos; and

@@ -269,9 +269,11 @@ fps                       original video FPS
 
 ### Expert Source Boundary
 
-The legacy expert directories contribute 50 right-handed experts per skill.
-They do not contain left-handed experts. Left-handed expert coverage comes from
-NSTC, and NSTC discovery is deliberately non-recursive: only
+The legacy expert directories contribute 50 right-handed experts for clear,
+lift, and smash. They do not contain left-handed experts. Serve explicitly
+excludes `scoring_videos/發球/羽球隊同學`, so every serve expert comes from NSTC.
+Left-handed expert coverage comes from NSTC, and NSTC discovery is deliberately
+non-recursive: only
 `training_videos/nstc/<skill>/left` and
 `training_videos/nstc/<skill>/right` are accepted. Person-named sibling
 directories are not training inputs.
@@ -279,8 +281,8 @@ directories are not training inputs.
 Known expert handedness takes precedence over wrist-motion estimation during
 extraction. NSTC output IDs are prefixed with `nstc_left_` or `nstc_right_`, so
 identical filenames in both hand directories cannot overwrite one another.
-The combined expert-bank inventory is 100 clear (80 right, 20 left), 76 serve
-(66 right, 10 left), 82 lift (72 right, 10 left), and 75 smash (66 right, 9
+The combined expert-bank inventory is 100 clear (80 right, 20 left), 26 serve
+(16 right, 10 left), 82 lift (72 right, 10 left), and 75 smash (66 right, 9
 left).
 
 `phase_indices` must be used for model tensors and rendered 64-frame correction
@@ -454,11 +456,23 @@ Velocity loss applies the same calculation to consecutive-frame differences.
 Angle loss compares eight limb/torso angle triplets and normalizes radians by
 pi. Bone loss compares the lengths of the 12 skeleton edges.
 
+Serve adds a full first-to-last transition loss. The support component compares
+the complete hip/knee/ankle trajectory and the start-to-end displacement. The
+upper-body component compares the signed forward-lean trajectory and endpoint,
+using the shoulder midpoint relative to the hip midpoint:
+
+```text
+L_support = 0.50 * trajectory_error + 0.50 * endpoint_error
+L_lean    = 0.50 * signed_lean_trajectory_error + 0.50 * signed_lean_endpoint_error
+L_transition = 0.65 * L_support + 0.35 * L_lean
+```
+
 ```text
 L_train = L_position
         + 0.50 * L_velocity
         + 0.25 * L_angle
         + 1.00 * L_bone
+        + serve_only(1.00 * L_transition)
 ```
 
 Training augmentation adds coordinate noise, masks joints, shifts time, and
@@ -543,6 +557,8 @@ D = D_position
   + 0.50 * D_angle
   + 0.50 * D_velocity
   + 0.25 * D_bone
+  + serve_only(0.65 * D_support_transition
+             + 0.35 * D_torso_lean_transition)
 ```
 
 The score transform is:
@@ -572,6 +588,12 @@ calibration:
 ```text
 raw criterion grade_k = maximum_k * score(distance_k) / 100
 ```
+
+The serve `重心轉移至非持拍腳` detail is the exception to a local window: it
+uses the full transition distance above, so both the lower-body support change
+and upper-body forward lean affect its 20 points. GPT receives the two component
+distances and must compare the first and last checkpoints before selecting the
+configured pause frame and circle joints.
 
 The raw criterion grades are proportionally reconciled so that:
 

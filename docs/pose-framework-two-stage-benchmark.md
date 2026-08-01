@@ -256,7 +256,7 @@ The production correctors were retrained only after this selection. Their full
 
 | Skill | Student mean | Expert mean | AUC | Test correction/expert distance | Test acceleration ratio | Improved students |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Serve | 45.000 | 99.801 | 0.99 | 0.275 | 0.997 | 100% |
+| Serve | 45.000 | 99.816 | 1.00 | 0.146 | 0.987 | 100% |
 | Lift | 45.000 | 99.803 | 1.00 | 0.356 | 0.995 | 100% |
 | Clear | 45.000 | 99.795 | 1.00 | 0.312 | 0.988 | 100% |
 | Smash | 45.000 | 99.805 | 0.98 | 0.319 | 0.995 | 100% |
@@ -291,7 +291,7 @@ Portable model SHA-256 values are:
 | YOLOX-M detector ONNX | `3dea6513388889f0fff4b77bf7a26013600321b9eb9ceb0e9a400a82572f5f23` |
 | MotionBERT checkpoint | `d80af32396c60cf66fa5afb7ef7f7c869ae0851afd3d91a75d55e76c5a62cb23` |
 | VideoPose3D checkpoint | `88f5abbb4e37499781d5646665f7c46b521d139b7fb54d182913c19a76b9c6de` |
-| Serve corrector ONNX | `5243e7c7f7abeea94985cb6aec9034a9fb4e28832ad5ff21d9bcee59d987ea28` |
+| Serve corrector ONNX | `86cc775851a2cdc6310042fbbae092131b5f64d83ce02515ec289a5e52e10aca` |
 | Lift corrector ONNX | `1843bae6a6232ca58efc4f07e30de09c50527bc520c9ebb36b54039c1987fd30` |
 | Clear corrector ONNX | `640be0ed09eb5b6d7de1c4c3fa52a15361539746f146d0d43b987f86feed7019` |
 | Smash corrector ONNX | `89b4abb03461705aaf1c081c9f0a7d71d5e52e346db0e7c128418839fe9cc111` |
