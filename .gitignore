@@ -31,7 +31,6 @@ tmp*
 !/models/skeleton_correction/smash_expert_guided_v1.onnx
 !/models/skeleton_correction/smash_expert_guided_v1.calibration.json
 *png
-uv.lock
 .env
 *.pem
 *.key
