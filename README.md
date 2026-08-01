@@ -138,7 +138,8 @@ The detailed prerequisites, equations, call graph, and tracing order are in
 
 - Python 3.12
 - PyTorch, NumPy, pandas, OpenCV, Pillow, Pydantic, and the OpenAI SDK
-- a compatible OpenMMLab stack: `mmengine`, `mmcv`, `mmdet`, and `mmpose`
+- RTMLib `0.0.15` and ONNX Runtime `1.24.4`
+- NVIDIA TensorRT and `onnxruntime-gpu` for the production GPU provider
 - FFmpeg for H.264 review videos
 
 Install project dependencies:
@@ -147,8 +148,9 @@ Install project dependencies:
 uv sync --dev
 ```
 
-The OpenMMLab packages are loaded lazily and must be installed separately for
-the target PyTorch/CUDA environment.
+The pose detector loads the RTMW3D ONNX weights configured by
+`RTMW3D_DETECTOR_MODEL` and `RTMW3D_POSE_MODEL`. Production uses the TensorRT
+execution provider; CPU-only development uses the regular ONNX Runtime package.
 
 ## Run One Skill Separately
 

@@ -27,6 +27,9 @@ dependencies = [
     "openai>=1.0.0",
     "dotenv>=0.9.9",
     "google-cloud-firestore>=2.21.0",
+    "rtmlib==0.0.15",
+    "onnxruntime==1.24.4; platform_system == 'Darwin'",
+    "onnxruntime-gpu==1.24.4; platform_system != 'Darwin'",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +46,16 @@ grade-students = "badminton_analysis.tools.grade_students:main"
 
 [dependency-groups]
 dev = ["pytest == 8.3.3", "mypy== 1.18.2"]
+
+[[tool.uv.dependency-metadata]]
+name = "rtmlib"
+version = "0.0.15"
+requires-dist = [
+    "numpy",
+    "opencv-contrib-python",
+    "opencv-python",
+    "tqdm",
+]
 
 [tool.basedpyright]
 reportExplicitAny = false

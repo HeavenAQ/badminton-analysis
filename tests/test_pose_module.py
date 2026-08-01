@@ -1,25 +1,46 @@
-import pytest
-import numpy as np
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, PropertyMock
+
+import numpy as np
+import pytest
 from badminton_analysis.services.pose_detector import PoseDetector
 from badminton_analysis.models.types import COCOKeypoints
 
 
 class TestPoseDetector:
     def setup_method(self, method):
-        with patch.object(PoseDetector, "_load_inferencer") as mock_inferencer:
-            mock_inferencer.return_value = MagicMock()
-            with patch.object(PoseDetector, "_load_2d_inferencer") as mock_2d:
-                mock_2d.return_value = MagicMock()
-                with patch("badminton_analysis.core.logger.Logger") as mock_logger:  # Mock the Logger
-                    mock_logger.return_value.info = MagicMock()  # Mock the info method
-                    self.detector = PoseDetector()
+        with patch("badminton_analysis.core.logger.Logger") as mock_logger:
+            mock_logger.return_value.info = MagicMock()
+            self.detector = PoseDetector()
 
     def test_pose_detector_initialization(self):
         assert self.detector.min_detection_confidence == 0.5
         assert self.detector.model is None
-        assert self.detector.wholebody_model is None
         assert hasattr(self.detector, "logger")
+
+    def test_onnx_gpu_model_bootstraps_on_cpu_before_provider_assignment(
+        self, monkeypatch
+    ):
+        calls = {}
+
+        def wholebody3d(**kwargs):
+            calls.update(kwargs)
+            return object()
+
+        monkeypatch.setitem(
+            sys.modules,
+            "rtmlib",
+            SimpleNamespace(Wholebody3d=wholebody3d),
+        )
+        self.detector.device = "cuda"
+        self.detector.backend = "onnxruntime"
+        self.detector._configure_execution_providers = MagicMock()
+
+        model = self.detector._load_inferencer()
+
+        assert calls["device"] == "cpu"
+        self.detector._configure_execution_providers.assert_called_once_with(model)
 
     # def test_fps_calculation(self):
     #     # Reset any existing time tracking
@@ -116,51 +137,25 @@ class TestPoseDetector:
 
     def test_get_pose_method(self):
         img = np.zeros((480, 640, 3), dtype=np.uint8)
-        inference_result = {
-            "predictions": [
-                [
-                    {
-                        "keypoints": [
-                            [0.1, 0.2, 0.3],
-                            [0.4, 0.5, 0.6],
-                        ],
-                        "keypoint_scores": [1.0, 1.0],
-                    }
-                ]
-            ]
-        }
-        wholebody_result = {
-            "predictions": [
-                [
-                    {
-                        "bbox": [100.0, 100.0, 200.0, 300.0],
-                        "keypoints": [[100.0, 200.0], [150.0, 250.0]],
-                        "keypoint_scores": [0.9, 0.8],
-                    }
-                ]
-            ]
-        }
-
-        self.detector.model = MagicMock()
-        self.detector.wholebody_model = MagicMock(return_value=iter([wholebody_result]))
-        with patch.object(
-            self.detector,
-            "_lift_wholebody_predictions_to_3d",
-            return_value=inference_result["predictions"][0],
-        ) as mock_lift:
-            result = self.detector.get_pose(img)
-
-        self.detector.wholebody_model.assert_called_once_with(
-            img,
-            return_datasamples=False,
-            show=False,
-            draw_bbox=False,
+        detector_model = MagicMock(return_value=np.array([[10, 20, 200, 300]]))
+        keypoints_3d = np.zeros((1, 17, 3), dtype=np.float64)
+        keypoints_2d = np.zeros((1, 17, 2), dtype=np.float64)
+        scores = np.ones((1, 17), dtype=np.float64)
+        pose_model = MagicMock(
+            return_value=(keypoints_3d, scores, None, keypoints_2d)
         )
-        self.detector.model.assert_not_called()
-        mock_lift.assert_called_once_with(
-            wholebody_result["predictions"][0],
+        self.detector.model = MagicMock(
+            det_model=detector_model,
+            pose_model=pose_model,
         )
-        assert result == inference_result["predictions"][0]
+
+        result = self.detector.get_pose(img)
+
+        detector_model.assert_called_once_with(img)
+        pose_model.assert_called_once_with(img, bboxes=[[10.0, 20.0, 200.0, 300.0]])
+        assert len(result) == 1
+        assert len(result[0]["keypoints"]) == 17
+        assert len(self.detector._last_wholebody_predictions) == 1
 
     def test_get_3d_landmarks_with_keypoints(self):
         results = [
