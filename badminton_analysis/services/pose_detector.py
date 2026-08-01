@@ -77,7 +77,7 @@ class PoseDetector:
         if self.backend != "onnxruntime" or self.device != "cuda":
             return
 
-        import onnxruntime as ort  # type: ignore[import-not-found]
+        import onnxruntime as ort
 
         available = set(ort.get_available_providers())
         if self.execution_provider == "tensorrt":
@@ -156,7 +156,7 @@ class PoseDetector:
 
     def _load_inferencer(self) -> Any:
         try:
-            from rtmlib import Wholebody3d  # type: ignore[import-not-found]
+            from rtmlib import Wholebody3d
         except ImportError as exc:
             raise RuntimeError(
                 "rtmlib and onnxruntime-gpu are required for RTMW3D inference"

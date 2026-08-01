@@ -136,7 +136,7 @@ class SkeletonCorrectionBackend:
         self.calibration = ScoreCalibration(**calibration_values)
 
     def _load_onnx_session(self, execution_provider: str) -> Any:
-        import onnxruntime as ort  # type: ignore[import-not-found]
+        import onnxruntime as ort
 
         onnx_path = self.model_path.with_suffix(".onnx")
         if not onnx_path.exists():

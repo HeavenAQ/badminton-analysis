@@ -17,7 +17,7 @@ def export_model(checkpoint_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         model,
-        dummy,
+        (dummy,),
         output_path,
         input_names=("features",),
         output_names=("corrected_skeleton",),
