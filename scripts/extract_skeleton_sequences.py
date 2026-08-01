@@ -54,6 +54,28 @@ def _handedness(
     return Handedness.LEFT if "left" in path.name.lower() else Handedness.RIGHT
 
 
+def _resolve_handedness(
+    video_path: Path,
+    estimate: Handedness | None,
+    known_handedness: Handedness | None,
+    overrides: Mapping[str, Handedness] | None,
+) -> tuple[Handedness, str]:
+    if known_handedness is not None:
+        return known_handedness, "known_metadata"
+    if overrides is not None and video_path.name in overrides:
+        return overrides[video_path.name], "metadata_override"
+    if estimate is not None:
+        return estimate, "wrist_motion"
+    return _handedness(video_path), "filename_fallback"
+
+
+def _sequence_identity(video_path: Path, id_prefix: str) -> tuple[str, str]:
+    if id_prefix and any(character in id_prefix for character in ("/", "\\")):
+        raise ValueError("id prefix must not contain a path separator")
+    sequence_stem = f"{id_prefix}{video_path.stem}"
+    return sequence_stem, f"{sequence_stem}{video_path.suffix.lower()}"
+
+
 def _load_handedness_overrides(path: Path | None) -> dict[str, Handedness]:
     if path is None or not path.exists():
         return {}
@@ -76,10 +98,13 @@ def extract_video_sequence(
     target_frames: int,
     handedness_overrides: Mapping[str, Handedness] | None = None,
     skill: Skill = Skill.CLEAR,
+    known_handedness: Handedness | None = None,
+    id_prefix: str = "",
 ) -> dict[str, Any]:
-    fallback_handedness = _handedness(video_path, handedness_overrides)
+    sequence_stem, sequence_video_name = _sequence_identity(video_path, id_prefix)
     summary: dict[str, Any] = {
         "filename": video_path.name,
+        "sequence_id": sequence_stem,
         "label": label,
         "skill": str(skill),
         "handedness": "",
@@ -115,13 +140,12 @@ def extract_video_sequence(
         estimate = estimate_handedness(
             full_skeleton_2d, full_confidence_2d
         )
-        handedness = estimate.handedness or fallback_handedness
-        if estimate.handedness is not None:
-            handedness_source = "wrist_motion"
-        elif handedness_overrides and video_path.name in handedness_overrides:
-            handedness_source = "metadata_override"
-        else:
-            handedness_source = "filename_fallback"
+        handedness, handedness_source = _resolve_handedness(
+            video_path,
+            estimate.handedness,
+            known_handedness,
+            handedness_overrides,
+        )
         summary.update(
             handedness=str(handedness),
             handedness_source=handedness_source,
@@ -207,13 +231,14 @@ def extract_video_sequence(
         output_dir = output_root / label
         output_dir.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
-            output_dir / f"{video_path.stem}.npz",
+            output_dir / f"{sequence_stem}.npz",
             skeleton_3d=resampled_3d,
             skeleton_2d=resampled_2d,
             confidence=resampled_confidence,
             skill=np.asarray(str(skill)),
             handedness=np.asarray(str(handedness)),
-            video_name=np.asarray(video_path.name),
+            video_name=np.asarray(sequence_video_name),
+            source_video_name=np.asarray(video_path.name),
             analysis_window=np.asarray((start, peak, end), dtype=np.int64),
             phase_indices=phase_indices,
             source_frame_indices=source_frame_indices,
@@ -248,6 +273,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
+        "--known-handedness",
+        choices=("left", "right"),
+        help="Authoritative handedness for every video in this invocation",
+    )
+    parser.add_argument(
+        "--id-prefix",
+        default="",
+        help="Prefix for output sequence IDs, used to avoid cross-directory collisions",
+    )
+    parser.add_argument(
         "--videos",
         nargs="+",
         help="Optional source filenames to extract, such as EG28.mp4 EG29.mp4",
@@ -274,6 +309,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         else output_root / "handedness_overrides.json"
     )
     handedness_overrides = _load_handedness_overrides(overrides_path)
+    known_handedness = (
+        Handedness.convert_to_enum(args.known_handedness)
+        if args.known_handedness
+        else None
+    )
     rows: list[dict[str, Any]] = []
     default_beginner_dir, default_expert_dir = DEFAULT_SOURCE_DIRS[spec.slug]
     groups = (
@@ -308,6 +348,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.frames,
                     handedness_overrides,
                     spec.skill,
+                    known_handedness,
+                    args.id_prefix,
                 )
             )
             pd.DataFrame(rows).to_csv(summary_path, index=False)
