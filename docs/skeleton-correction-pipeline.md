@@ -178,47 +178,51 @@ whose skill does not match the requested skill or dataset.
 
 ### Serve Criteria
 
-```text
-10  雙手平舉
-10  將重心放至持拍腳
-20  重心轉移至非持拍腳
-20  髖關節前旋
-20  持拍手手腕發力
-20  肩膀旋轉朝前
-```
+1. `雙手平舉`: 發球準備時雙手平舉，讓持拍手與非持拍手一起保持穩定。
+2. `將重心放至持拍腳`: 動作開始時先將重心放在持拍腳，準備向前轉移。
+3. `重心轉移至非持拍腳`: 揮拍過程將重心由持拍腳轉到非持拍腳，同時讓上半身順勢向前。
+4. `髖關節前旋`: 重心轉移時讓髖關節向前旋轉，帶動整個揮拍動作。
+5. `持拍手手腕發力`: 擊球瞬間用持拍手手腕發力，讓球拍快速向前。
+6. `肩膀旋轉朝前`: 隨揮時讓肩膀旋轉朝前，完成發球動作。
 
 Serve weights emphasize the pelvis, knees, ankles, dominant arm, and shoulder
 because weight transfer and body rotation are part of the qualitative contract.
 
 ### Lift Criteria
 
-```text
-10  手腕放置腰部放鬆預備
-25  手腕往後引拍
-35  手腕往前壓
-30  手腕放鬆回到預備姿勢
-```
+1. `手腕放置腰部放鬆預備`: 手腕放在腰部並保持放鬆，準備開始引拍。
+2. `手腕往後引拍`: 持拍手腕往後引拍，為向前挑球準備力量。
+3. `手腕往前壓`: 擊球時將手腕往前壓，帶動球拍向前。
+4. `手腕放鬆回到預備姿勢`: 擊球後放鬆手腕，順勢回到腰部的預備姿勢。
 
 Lift weights emphasize the dominant shoulder, elbow, and wrist. The final
 criterion explicitly evaluates relaxation and return to the ready position.
 
 ### Clear Criteria
 
-```text
-10  球拍舉至腰部預備
-10  轉身
-20  雙手手肘平衡
-20  手肘往前轉至前方
-20  手腕發力
-20  慣用手肩膀往前轉
-```
+1. `球拍舉至腰部預備`: 準備時將球拍舉至腰部，保持身體放鬆並準備轉身。
+2. `轉身`: 引拍時先轉身，讓髖部與肩膀一起帶動身體。
+3. `雙手手肘平衡`: 轉身蓄力時雙手手肘保持平衡，非慣用手協助穩定身體。
+4. `手肘往前轉至前方`: 擊球前讓慣用手手肘往前轉到身體前方，再帶動前臂。
+5. `手腕發力`: 擊球瞬間用手腕發力，讓球拍快速向前通過擊球點。
+6. `慣用手肩膀往前轉`: 隨揮時讓慣用側肩膀往前轉，並順勢帶動上半身向前。
 
 ### Smash Criteria
 
-Smash retains the same six qualitative names and maxima as clear. It is still a
-separate skill: its joint weights give greater importance to the dominant arm,
-shoulder, hips, and explosive follow-through, and it must be trained and
-calibrated only on smash data.
+1. `球拍舉至腰部預備`: 準備時將球拍舉至腰部，保持身體放鬆並準備轉身蓄力。
+2. `轉身`: 引拍時先轉身，讓髖部與肩膀共同完成殺球蓄力。
+3. `雙手手肘平衡`: 蓄力時雙手手肘保持平衡，非慣用手協助穩定並指向來球。
+4. `手肘往前轉至前方`: 擊球前讓慣用手手肘往前轉到身體前方，再帶動前臂加速。
+5. `手腕發力`: 擊球瞬間用手腕發力，讓球拍快速向下通過擊球點。
+6. `慣用手肩膀往前轉`: 隨揮時讓慣用側肩膀往前轉，並順勢帶動上半身向前。
+
+Smash is still a separate skill: its joint weights give greater importance to
+the dominant arm, shoulder, hips, and explosive follow-through, and it must be
+trained and calibrated only on smash data.
+
+These sentences are the coaching contract sent to the language model and used
+by deterministic fallback feedback. Coaching does not introduce angle
+thresholds or degree-based instructions.
 
 ## 4. Pose Extraction And Frame Provenance
 
